@@ -1,4 +1,5 @@
 // src/app/page.js
+
 export default function Page() {
   return (
     <>
@@ -35,20 +36,20 @@ export default function Page() {
 
       {/* Sections sous la vidéo */}
       <section id="story" className="py-20 bg-white text-center">
-        {/* ...ton contenu Histoire... */}
+        {/* …ton contenu Histoire… */}
       </section>
 
       <section id="gallery" className="py-20 bg-gray-100">
-        {/* ...galerie... */}
+        {/* …ta galerie… */}
       </section>
 
       <section id="programme" className="py-20 bg-white">
-        {/* ...programme... */}
+        {/* …programme… */}
       </section>
 
       <section id="message" className="py-20 bg-gray-100">
-        {/* ...formulaire de message... */}
+        {/* …formulaire… */}
       </section>
     </>
-  )
+  );
 }
