@@ -30,10 +30,10 @@ export default function Page() {
         {/* Contenu centré */}
 -       <div className="relative z-10 flex flex-col items-center justify-center h-full text-white px-4">
 +       <div className="relative z-10 flex flex-col items-center justify-center h-full text-white px-6 pt-16">
-          <h1 className="text-5xl font-serif drop-shadow-lg">Grace &amp; Stone</h1>
-          <p className="mt-2 text-lg drop-shadow-md">Samedi 09 Août 2025</p>
+          <h1 className="text-5xl font-serif drop-shadow-lg">Famille MERENGE</h1>
+          <p className="mt-2 text-lg drop-shadow-md">Suivez nous</p>
           <button className="mt-8 px-6 py-3 border border-white hover:bg-white/20 transition rounded">
-            Réservez la date
+            La Victoire
           </button>
         </div>
       </main>
