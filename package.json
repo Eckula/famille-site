@@ -1,5 +1,4 @@
 {
-<<<<<<< HEAD
   "name": "famille-site",
   "version": "0.1.0",
   "private": true,
@@ -21,10 +20,8 @@
     "autoprefixer": "^10.4.21",
     "eslint": "^9",
     "eslint-config-next": "15.4.1",
-=======
   "devDependencies": {
     "autoprefixer": "^10.4.21",
->>>>>>> 32e98c7 (Initial commit)
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.11"
   }
