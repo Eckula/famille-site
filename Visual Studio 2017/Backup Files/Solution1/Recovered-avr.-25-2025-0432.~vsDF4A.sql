@@ -1,0 +1,20 @@
+/****** Script de la commande SelectTopNRows à partir de SSMS  ******/
+SELECT TOP (1000) [ID_ENOV]
+      ,[ID]
+      ,[MAIL]
+      ,[TEL]
+      ,[CIV]
+      ,[PRENOM]
+      ,[NOM]
+      ,[Propriétaire]
+      ,[Fonction]
+      ,[Secteur]
+      ,[Agence]
+      ,[Client]
+      ,[ORIGINE]
+      ,[IF1]
+      ,[IF2]
+  FROM [ListesExternes].[dbo].[ENE0103_ISTA_PUBLIC_V2]
+
+ALTER TABLE  [ListesExternes].[dbo].[ENE0103_ISTA_PUBLIC_V2]
+ALTER COLUMN [ID_ENOV] INT;

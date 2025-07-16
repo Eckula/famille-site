@@ -1,0 +1,27 @@
+mardi 4 avril 2023 13:35:26 CEST
+GET
+  FILE='C:\PROGRA~1\IBM\SPSS\STATIS~1\27\Samples\French\adl.sav'.
+DATASET NAME Jeu_de_données1 WINDOW=FRONT.
+CROSSTABS
+  /TABLES=id BY gender
+  /FORMAT=AVALUE TABLES
+  /CELLS=COUNT
+  /COUNT ROUND CELL.
+jeudi 6 avril 2023 16:28:27 CEST
+GET
+  FILE='\\ENOV-LYON\Clients\BU RTF\Retail et Shopper\Carrefour\Carrefour_Service_Clients\Baromètre_satisfaction_Carrefour Service Clients\Traitement\Carrefour_SATCLI.sav'.
+*>Avertissement n° 5281.  Nom de la commande : GET FILE
+*>SPSS Statistics s'exécute en mode de codage Unicode.  Le fichier utilise une
+*>page de codes spécifique à l'environnement local.  La largeur définie pour les
+*>variables de chaîne est automatiquement multipliée par trois afin d'éviter
+*>toute perte de données.  Vous pouvez faire appel à ALTER TYPE pour définir la
+*>largeur des variables de chaîne sur la plus grande valeur observée parmi les
+*>chaînes de variable.
+ALTER TYPE ALL(A=AMIN).
+DATASET NAME Jeu_de_données1 WINDOW=FRONT.
+vendredi 19 avril 2024 12:42:11 CEST
+*>Erreur n° 7003
+*>La licence IBM SPSS Statistics a expiré.
+vendredi 19 avril 2024 12:43:24 CEST
+*>Erreur n° 7003
+*>La licence IBM SPSS Statistics a expiré.

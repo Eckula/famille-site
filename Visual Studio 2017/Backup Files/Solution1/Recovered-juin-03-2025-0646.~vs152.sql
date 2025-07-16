@@ -1,0 +1,14 @@
+USE [Askia_Cca];
+GO
+UPDATE [dbo].[Lists]
+SET [Deleted] = 0
+WHERE ListID IN (12267, 12268, 12269, 12270, 12271, 12273, 12274);
+GO
+
+
+USE [Askia_Cca];
+GO
+SELECT [ListID], [Deleted]
+FROM [dbo].[Lists]
+WHERE ListID IN (12267, 12268, 12269, 12270, 12271, 12273, 12274);
+GO

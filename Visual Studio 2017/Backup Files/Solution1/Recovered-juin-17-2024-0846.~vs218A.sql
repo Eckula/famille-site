@@ -1,0 +1,25 @@
+/****** Script de la commande SelectTopNRows à partir de SSMS  ******/
+SELECT TOP (1000) [ID_ENOV]
+      ,[NUM_COMMANDE]
+      ,[CODE_ACTION]
+      ,[SIRET]
+      ,[RAISON_SOCIALE]
+      ,[RAISON_SOCIALE_2]
+      ,[LIBELLE_BATIMENT]
+      ,[LIBELLE_ADRESSE]
+      ,[LIBELLE_SPECIFIQUE]
+      ,[CP]
+      ,[CENTRE_DISTRIBUTEUR]
+      ,[NAF]
+      ,[NAF_LIB]
+      ,[TRANCHE_EFFECTIF]
+      ,[TELEPHONE]
+      ,[DOUBLON_TEL]
+      ,[CODE_COMMUNE]
+      ,[TYPE]
+	  ,[VILLE]
+  FROM [ListesExternes].[dbo].[TCT1340_ARCEP_FermetureCuivre_Pros]
+
+
+  ALTER TABLE [ListesExternes].[dbo].[TCT1340_ARCEP_FermetureCuivre_Pros]
+  ADD [VILLE_CODE_SAISIE] nvarchar(255);

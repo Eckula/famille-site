@@ -1,0 +1,55 @@
+/****** Script de la commande SelectTopNRows à partir de SSMS  ******/
+SELECT TOP (1000) [idkpep]
+      ,[noide]
+      ,[nom]
+      ,[prenom]
+      ,[sexe]
+      ,[age_millesime]
+      ,[t_age_detail]
+      ,[t_age]
+      ,[comp_fam]
+      ,[nb_be]
+      ,[nature_activite]
+      ,[gamme]
+      ,[formule]
+      ,[statut]
+      ,[anciennete]
+      ,[departement]
+      ,[region]
+      ,[adresse_mail]
+      ,[tel_fixe]
+      ,[tel_mobile]
+      ,[top_bc]
+      ,[IDENOV]
+      ,[ORIGINE]
+      ,[TEL1]
+      ,[Doublon]
+      ,[Doublon_vague1]
+      ,[SEXE_NUM]
+      ,[T_AGE_NUM_OLD]
+      ,[T_AGE_NUM]
+      ,[T_AGE2]
+      ,[FORMULE_NUM]
+      ,[GAMME_NUM]
+      ,[TOP_BC_NUM]
+      ,[COMP_FAM_NUM]
+      ,[NATURE_ACTIVITE_NUM]
+      ,[DEPARTEMENT_NUM]
+      ,[REGION_NUM]
+      ,[VAGUE]
+      ,[TYPETEL]
+      ,[LiB_TEL]
+  FROM [ListesExternes].[dbo].[BFA0170_MGEN_BaroSatglo_Juillet2025]
+
+  SELECT* 
+   FROM [ListesExternes].[dbo].[BFA0170_MGEN_BaroSatglo_Juillet2025]
+   WHERE GAMME_NUM LIKE '2';
+
+   UPDATE [ListesExternes].[dbo].[BFA0170_MGEN_BaroSatglo_Juillet2025]
+   SET [GAMME_NUM] = 2
+   WHERE [GAMME_NUM] =6;
+
+   ALTER TABLE [ListesExternes].[dbo].[BFA0170_MGEN_BaroSatglo_Juillet2025]
+   ADD Relance1 NVARCHAR(500),
+    Invitation SMS NVARCHAR(500),
+    Invitation tirage au sort NVARCHAR(500);

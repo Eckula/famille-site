@@ -1,0 +1,22 @@
+/****** Script de la commande SelectTopNRows à partir de SSMS  ******/
+SELECT TOP (1000) [ID_ENOV]
+      ,[Email_Address]
+      ,[TYPE_ENERGIE]
+      ,[LB_CONT]
+      ,[Civilite]
+      ,[PRENOM]
+      ,[NOM]
+      ,[Address 1]
+      ,[Address 2]
+      ,[VILLE]
+      ,[Zip or Postal Code]
+      ,[CODE_DPT]
+      ,[UDA5]
+      ,[UDA9]
+      ,[LIB_UDA5]
+  FROM [ListesExternes].[dbo].[ENE0091_ENGIE_PostTestMagazine]
+
+SELECT *
+INTO [ListesExternes].[dbo].[ENE0115_ENGIE_PostTestMagazine]
+FROM [ListesExternes].[dbo].[ENE0091_ENGIE_PostTestMagazine]
+WHERE 1 = 0;

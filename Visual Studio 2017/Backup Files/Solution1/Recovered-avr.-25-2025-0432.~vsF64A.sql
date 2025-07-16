@@ -1,0 +1,30 @@
+/****** Script de la commande SelectTopNRows à partir de SSMS  ******/
+SELECT TOP (1000) [Identifiant_Contact]
+      ,[Master_customer_id]
+      ,[EMAIL]
+      ,[Date_de_creation]
+      ,[Dernier_Magasin]
+      ,[RECENCE]
+      ,[NB_PROD]
+      ,[NB_VISITE]
+      ,[Rayon]
+      ,[DUREE]
+      ,[POINTS]
+      ,[DATE_CREDIT]
+      ,[CODE]
+      ,[SEXE]
+      ,[AGEclair]
+      ,[AGE]
+      ,[CSP]
+      ,[DPT]
+      ,[ZONE]
+      ,[TAILLE_FOYER]
+      ,[ID_MYCONSOO]
+  FROM [ListesExternes].[dbo].[RET2570_BUT_ProfilingClients_CLIENT]
+
+  	  ALTER TABLE  [ListesExternes].[dbo].[RET2570_BUT_ProfilingClients_CLIENT]
+      ALTER COLUMN [RECENCE] float
+
+
+	  	  ALTER TABLE  [ListesExternes].[dbo].[RET2570_BUT_ProfilingClients_CLIENT]
+          ALTER COLUMN [CIBLE] nvarchar (255)
