@@ -2,36 +2,27 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Ajout de styles globaux pour lisibilité et confort */
+/* Styles globaux de confort */
 body {
   margin: 0;
   font-family: inherit;
   background: #f5f6fa;
 }
 
-h1, h2, h3, h4, h5, h6 {
+a {
+  text-decoration: none;
+}
+
+/* Menu */
+nav {
   font-family: inherit;
+  letter-spacing: 0.01em;
+}
+
+ul {
   margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-section {
-  padding-left: 1rem;
-  padding-right: 1rem;
-}
-
-button {
-  font-family: inherit;
-  cursor: pointer;
-}
-
-@media (max-width: 640px) {
-  /* Styles mobiles : le bouton plus grand, titre centré, padding augmenté */
-  h1 {
-    font-size: 2rem;
-  }
-  section {
-    padding-left: 0.5rem;
-    padding-right: 0.5rem;
-  }
-}
 
