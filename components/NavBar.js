@@ -1,6 +1,5 @@
 // components/NavBar.js
 "use client";
-
 import Link from 'next/link';
 import { useState } from 'react';
 
@@ -8,11 +7,11 @@ export default function NavBar() {
   const [showEvents, setShowEvents] = useState(false);
 
   return (
-    <nav className="bg-gray-900 text-white flex justify-between items-center px-6 py-3">
-      <div className="text-2xl font-bold">
+    <nav className="bg-black/60 text-white flex items-center px-6 py-3 fixed top-0 inset-x-0 z-30 backdrop-blur">
+      <div className="text-2xl font-bold flex-1">
         <Link href="/">Famille</Link>
       </div>
-      <ul className="flex gap-6">
+      <ul className="flex gap-6 text-base font-medium">
         <li><Link href="/">Accueil</Link></li>
         <li
           className="relative"
@@ -21,7 +20,7 @@ export default function NavBar() {
         >
           <span className="cursor-pointer">Événements ▼</span>
           {showEvents && (
-            <ul className="absolute left-0 bg-gray-800 shadow rounded mt-2 w-52 z-20">
+            <ul className="absolute left-0 bg-gray-800 text-sm shadow rounded mt-2 w-56 z-20">
               <li className="px-4 py-2 hover:bg-gray-700"><Link href="/evenements/anniversaires">Anniversaires</Link></li>
               <li className="px-4 py-2 hover:bg-gray-700"><Link href="/evenements/naissances">Naissances</Link></li>
               <li className="px-4 py-2 hover:bg-gray-700"><Link href="/evenements/deces">Décès</Link></li>

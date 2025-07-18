@@ -2,45 +2,36 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
-html,
+/* Ajout de styles globaux pour lisibilité et confort */
 body {
-  max-width: 100vw;
-  overflow-x: hidden;
+  margin: 0;
+  font-family: inherit;
+  background: #f5f6fa;
 }
 
-body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-* {
-  box-sizing: border-box;
-  padding: 0;
+h1, h2, h3, h4, h5, h6 {
+  font-family: inherit;
   margin: 0;
 }
 
-a {
-  color: inherit;
-  text-decoration: none;
+section {
+  padding-left: 1rem;
+  padding-right: 1rem;
 }
 
-@media (prefers-color-scheme: dark) {
-  html {
-    color-scheme: dark;
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+@media (max-width: 640px) {
+  /* Styles mobiles : le bouton plus grand, titre centré, padding augmenté */
+  h1 {
+    font-size: 2rem;
+  }
+  section {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
   }
 }
+
