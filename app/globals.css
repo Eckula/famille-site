@@ -1,3 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
@@ -39,4 +43,16 @@ a {
   html {
     color-scheme: dark;
   }
+}
+/* --- AJOUTS --- */
+
+/* Cartes réutilisables (optionnel) */
+@layer utilities {
+  .card { @apply rounded-2xl border bg-white shadow-sm hover:shadow-md transition border-slate-200; }
+  .card-dark { @apply dark:bg-slate-900 dark:border-slate-800; }
+}
+
+/* Accessibilité : cache la vidéo si "réduire les animations" */
+@media (prefers-reduced-motion: reduce) {
+  .bg-video { display: none; }
 }
