@@ -1,159 +1,85 @@
-// app/page.js
-import GalleryLightbox from "./components/GalleryLightbox";
+import Link from "next/link";
 
-export default function Home() {
-  // Images de démonstration (placeholders)
-  const gallery = Array.from({ length: 12 }).map((_, i) => ({
-    thumb: `https://picsum.photos/seed/f${i + 1}/600/400`,
-    full:  `https://picsum.photos/seed/f${i + 1}/1600/1000`,
-  }));
+const cards = [
+  { 
+    title: "Photos",   
+    desc: "Une sélection d’images souvenirs.", 
+    href: "/photos",   
+    img: "/images/photos.jpg"   
+  },
+  { 
+    title: "Vidéos",   
+    desc: "Regardez nos clips et vlogs.", 
+    href: "/videos",   
+    img: "/images/videos.jpg"   
+  },
+  { 
+    title: "Événements", 
+    desc: "Anniversaires, voyages et sorties.", 
+    href: "/evenements", 
+    img: "/images/evenements.jpg" 
+  },
+  { 
+    title: "Albums",   
+    desc: "Classés par thème ou par date.", 
+    href: "/albums",   
+    img: "/images/albums.jpg"   
+  },
+  { 
+    title: "Documents",
+    desc: "PDF et fichiers partagés.", 
+    href: "/docs",     
+    img: "/images/docs.jpg"     
+  },
+  { 
+    title: "Admin",    
+    desc: "Espace réservé aux membres.", 
+    href: "/admin",    
+    img: "/images/admin.jpg"    
+  },
+];
 
-  // Timeline d'événements
-  const timeline = [
-    {
-      date: "15 septembre 2025",
-      title: "Anniversaire de Léa",
-      location: "À la maison",
-      desc: "Gâteau, jeux et photos en famille.",
-      image: "https://picsum.photos/seed/event1/1200/600",
-    },
-    {
-      date: "3–5 octobre 2025",
-      title: "Weekend à la mer",
-      location: "Côte Atlantique",
-      desc: "Balades sur la plage et coucher de soleil.",
-      image: "https://picsum.photos/seed/event2/1200/600",
-    },
-  ];
-
+export default function HomePage() {
   return (
-    <main>
-      {/* ===== Header ===== */}
-      <header className="px-6 py-16 text-center">
-        <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight drop-shadow-md text-white">
-          Famille Merenge
-        </h1>
-        <p className="mt-4 text-lg md:text-xl text-white/90 drop-shadow">
-          Moments partagés • Souvenirs • Projets
+    <main className="relative min-h-screen text-white">
+      {/* Bandeau d'intro */}
+      <section className="flex flex-col items-center justify-center text-center pt-24 pb-8 px-6">
+        <h1 className="text-5xl font-extrabold drop-shadow-lg">Famille Merenge</h1>
+        <p className="mt-4 text-lg max-w-2xl drop-shadow">
+          Bienvenue sur notre espace familial — retrouvez photos, vidéos, souvenirs et événements importants.
         </p>
-      </header>
+      </section>
 
-      {/* ===== 3 Cartes ===== */}
-      <section className="px-6 max-w-6xl mx-auto -mt-2">
-        <div className="grid gap-6 md:grid-cols-3">
-          {/* Carte 1 */}
-          <a href="#galerie" className="card card-dark p-6">
-            <div className="aspect-video overflow-hidden rounded-lg">
+      {/* Grille de cartes */}
+      <section className="max-w-6xl mx-auto px-6 pb-16 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+        {cards.map((c) => (
+          <Link
+            key={c.href}
+            href={c.href}
+            className="group relative overflow-hidden rounded-2xl border border-white/25 bg-white/5 shadow-sm hover:shadow-lg transition"
+          >
+            {/* Image */}
+            <div className="aspect-video w-full overflow-hidden">
               <img
-                src="https://picsum.photos/seed/famille-photos/800/450"
-                alt="Photos"
-                className="w-full h-full object-cover"
+                src={c.img}
+                alt={c.title}
+                className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
               />
             </div>
-            <h3 className="mt-4 text-xl font-semibold">Photos</h3>
-            <p className="mt-1 text-slate-700 dark:text-slate-300">
-              Une sélection d’images souvenirs.
-            </p>
-          </a>
 
-          {/* Carte 2 */}
-          <a href="#videos" className="card card-dark p-6">
-            <div className="aspect-video overflow-hidden rounded-lg">
-              <img
-                src="https://picsum.photos/seed/famille-videos/800/450"
-                alt="Vidéos"
-                className="w-full h-full object-cover"
-              />
+            {/* Dégradé bas */}
+            <div className="absolute inset-0 pointer-events-none">
+              <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/70 to-transparent" />
             </div>
-            <h3 className="mt-4 text-xl font-semibold">Vidéos</h3>
-            <p className="mt-1 text-slate-700 dark:text-slate-300">
-              Regardez nos clips et vlogs.
-            </p>
-          </a>
 
-          {/* Carte 3 */}
-          <a href="#evenements" className="card card-dark p-6">
-            <div className="aspect-video overflow-hidden rounded-lg">
-              <img
-                src="https://picsum.photos/seed/famille-events/800/450"
-                alt="Événements"
-                className="w-full h-full object-cover"
-              />
+            {/* Texte */}
+            <div className="absolute bottom-0 left-0 right-0 p-4">
+              <h2 className="text-xl font-semibold drop-shadow">{c.title}</h2>
+              <p className="text-sm text-white/90">{c.desc}</p>
             </div>
-            <h3 className="mt-4 text-xl font-semibold">Événements</h3>
-            <p className="mt-1 text-slate-700 dark:text-slate-300">
-              Anniversaires, voyages et sorties.
-            </p>
-          </a>
-        </div>
+          </Link>
+        ))}
       </section>
-
-      {/* ===== Galerie ===== */}
-      <section id="galerie" className="px-6 py-16 max-w-6xl mx-auto">
-        <h2 className="text-3xl font-bold text-white drop-shadow">Galerie</h2>
-        <p className="mt-2 text-white/90">Clique sur une image pour l’agrandir.</p>
-        <GalleryLightbox images={gallery} />
-      </section>
-
-      {/* ===== Vidéos ===== */}
-      <section id="videos" className="px-6 py-16 max-w-4xl mx-auto">
-        <h2 className="text-3xl font-bold text-white drop-shadow">Vidéos</h2>
-        <p className="mt-2 text-white/90">Exemple d’intégration YouTube.</p>
-        <div className="mt-6 aspect-video overflow-hidden rounded-2xl border border-white/40 bg-black/80">
-          <iframe
-            className="w-full h-full"
-            src="https://www.youtube.com/embed/dQw4w9WgXcQ"
-            title="Exemple YouTube"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-            allowFullScreen
-          />
-        </div>
-      </section>
-
-      {/* ===== Événements ===== */}
-      <section id="evenements" className="px-6 py-16 max-w-5xl mx-auto">
-        <h2 className="text-3xl font-bold text-white drop-shadow">Événements</h2>
-        <p className="mt-2 text-white/90">Nos moments marquants.</p>
-        <ol className="relative pl-10 mt-6 before:absolute before:inset-y-0 before:left-4 before:w-px before:bg-white/40">
-          {timeline.map((it, i) => (
-            <li key={i} className="mb-8 last:mb-0 relative">
-              <span className="absolute left-3.5 top-1.5 inline-flex h-3 w-3 rounded-full bg-indigo-400 ring-4 ring-white/60"></span>
-              <div className="rounded-xl border border-white/40 bg-white/85 dark:bg-slate-900/80 p-4">
-                <div className="flex flex-wrap items-center gap-2">
-                  <time className="text-xs uppercase tracking-wide text-slate-700 dark:text-slate-300">
-                    {it.date}
-                  </time>
-                  {it.location && (
-                    <span className="text-xs text-slate-700 dark:text-slate-300">
-                      • {it.location}
-                    </span>
-                  )}
-                </div>
-                <h3 className="mt-1 font-semibold text-slate-900 dark:text-slate-100">
-                  {it.title}
-                </h3>
-                {it.desc && (
-                  <p className="mt-1 text-sm text-slate-700 dark:text-slate-300">
-                    {it.desc}
-                  </p>
-                )}
-                {it.image && (
-                  <img
-                    src={it.image}
-                    alt=""
-                    className="mt-3 w-full max-h-60 object-cover rounded-lg"
-                  />
-                )}
-              </div>
-            </li>
-          ))}
-        </ol>
-      </section>
-
-      {/* ===== Footer ===== */}
-      <footer className="px-6 py-10 text-center text-sm text-white/80">
-        © {new Date().getFullYear()} Famille Merenge. Tous droits réservés.
-      </footer>
     </main>
   );
 }

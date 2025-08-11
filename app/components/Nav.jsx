@@ -36,15 +36,19 @@ export default function Nav() {
       <div className="mx-auto max-w-6xl px-4">
         {/* grille à 3 colonnes pour centrer le titre */}
         <div className="mt-4 grid grid-cols-3 items-center rounded-full border border-white/30 bg-black/35 px-4 py-2 text-white backdrop-blur">
+          
           {/* Colonne gauche : liens desktop */}
-          <div className="hidden md:flex items-center gap-6">
-            <a href="#galerie" className="hover:text-yellow-300 transition">Galerie</a>
-            <a href="#videos" className="hover:text-yellow-300 transition">Vidéos</a>
-            <a href="#evenements" className="hover:text-yellow-300 transition">Événements</a>
+          <div className="hidden md:flex items-center gap-6 text-sm">
+            <Link href="/galerie" className="hover:text-yellow-300 transition">Galerie</Link>
+            <Link href="/videos" className="hover:text-yellow-300 transition">Vidéos</Link>
+            <Link href="/evenements" className="hover:text-yellow-300 transition">Événements</Link>
+            <Link href="/albums" className="hover:text-yellow-300 transition">Albums</Link>
+            <Link href="/docs" className="hover:text-yellow-300 transition">Documents</Link>
+            <Link href="/admin" className="hover:text-yellow-300 transition">Admin</Link>
           </div>
 
-          {/* Colonne centre : titre toujours visible et bien centré */}
-          <div className="text-center text-base sm:text-lg font-bold">
+          {/* Colonne centre : titre centré */}
+          <div className="text-center text-base sm:text-lg font-bold truncate">
             <Link href="/" className="hover:text-yellow-300 transition">
               Famille Merenge
             </Link>
@@ -77,10 +81,12 @@ export default function Nav() {
             aria-label="Menu de navigation"
           >
             <div className="grid gap-2">
-              <a href="#galerie" className="rounded-lg px-3 py-2 hover:bg-white/10" onClick={() => setOpen(false)}>Galerie</a>
-              <a href="#videos" className="rounded-lg px-3 py-2 hover:bg-white/10" onClick={() => setOpen(false)}>Vidéos</a>
-              <a href="#evenements" className="rounded-lg px-3 py-2 hover:bg-white/10" onClick={() => setOpen(false)}>Événements</a>
-              {/* Si tu crées plus tard de vraies pages /photos ou /videos, tu pourras ajouter des <Link href="/photos">…</Link> ici */}
+              <Link href="/galerie" className="rounded-lg px-3 py-2 hover:bg-white/10" onClick={() => setOpen(false)}>Galerie</Link>
+              <Link href="/videos" className="rounded-lg px-3 py-2 hover:bg-white/10" onClick={() => setOpen(false)}>Vidéos</Link>
+              <Link href="/evenements" className="rounded-lg px-3 py-2 hover:bg-white/10" onClick={() => setOpen(false)}>Événements</Link>
+              <Link href="/albums" className="rounded-lg px-3 py-2 hover:bg-white/10" onClick={() => setOpen(false)}>Albums</Link>
+              <Link href="/docs" className="rounded-lg px-3 py-2 hover:bg-white/10" onClick={() => setOpen(false)}>Documents</Link>
+              <Link href="/admin" className="rounded-lg px-3 py-2 hover:bg-white/10" onClick={() => setOpen(false)}>Admin</Link>
             </div>
           </div>
         </div>
