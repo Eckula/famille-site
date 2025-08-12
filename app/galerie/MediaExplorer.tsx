@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import MediaCard from "@/components/MediaCard";
+import MediaCard from "../components/MediaCard";
+
 
 type Item = {
   id: string;
