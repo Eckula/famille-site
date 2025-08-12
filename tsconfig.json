@@ -14,13 +14,19 @@
     "isolatedModules": true,
     "jsx": "preserve",
 
-    "baseUrl": ".",                     // ⟵ ajouté
-    "paths": {                          // ⟵ ajouté
-      "@/*": ["./*"]
+    // ➜ ajout essentiel pour l'alias "@/..."
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["*"]
     },
 
     "plugins": [{ "name": "next" }]
   },
-  "include": ["next-env.d.ts", ".next/types/**/*.ts", "**/*.ts", "**/*.tsx"],
+  "include": [
+    "next-env.d.ts",
+    ".next/types/**/*.ts",
+    "**/*.ts",
+    "**/*.tsx"
+  ],
   "exclude": ["node_modules"]
 }
