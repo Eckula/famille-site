@@ -1,54 +1,71 @@
+// app/api/media/list/route.ts
 import { NextResponse } from "next/server";
 import cloudinary from "@/lib/cloudinary";
 
+// extensions considérées comme documents (inclut audio/archives)
 const DOC_EXTS = new Set([
-  "pdf","doc","docx","xls","xlsx","ppt","pptx","txt","csv","zip","rar","7z",
-  "json","xml","md"
+  "pdf","doc","docx","xls","xlsx","ppt","pptx","txt","csv","json","xml","md",
+  "zip","rar","7z","tar","gz",
+  "mp3","wav","aac","m4a","flac","ogg","oga"
 ]);
-const AUDIO_EXTS = new Set(["mp3","wav","aac","m4a","flac","ogg","oga"]);
 const VIDEO_EXTS = new Set(["mp4","mov","webm","mkv","avi","m4v"]);
 
+// détecte le "kind" voulu pour la galerie
+function detectKind(resourceType: string, format?: string): "image"|"video"|"document" {
+  const f = (format || "").toLowerCase();
+  if (DOC_EXTS.has(f)) return "document";
+  if (resourceType === "video" || VIDEO_EXTS.has(f)) return "video";
+  if (resourceType === "image") return "image";
+  // par défaut on classe en document pour éviter qu'un PDF déguisé en image disparaisse
+  return "document";
+}
+
 function mapItem(r: any) {
-  const format = String(r.format || "").toLowerCase();
-  const type = String(r.resource_type || "").toLowerCase();
-
-  // Détecte le "kind"
-  let kind: "image" | "video" | "file";
-  if (type === "image") kind = "image";
-  else if (type === "video" || VIDEO_EXTS.has(format)) kind = "video";
-  else if (type === "raw" || DOC_EXTS.has(format) || AUDIO_EXTS.has(format)) kind = "file";
-  else kind = "file"; // par défaut
-
-  // Miniature
+  const kind = detectKind(r.resource_type, r.format);
+  // miniature
   let thumb = r.secure_url as string;
   if (kind === "image") {
+    // vignette optimisée
     thumb = thumb.replace("/upload/", "/upload/c_fill,w_600,h_400,q_auto,f_auto/");
   } else if (kind === "video") {
+    // poster vidéo (fallback simple)
     thumb = r.secure_url + "#t=0.5";
   } else {
-    thumb = ""; // on utilisera un rendu “carte document”
+    thumb = ""; // documents: on affichera une carte texte/icône
   }
 
   return {
-    id: r.asset_id,
-    kind,
+    id: r.asset_id as string,
+    kind,                                   // "image" | "video" | "document"
     thumb,
-    url: r.secure_url,
-    title: r.public_id.split("/").pop(),
-    createdAt: r.created_at,
-    folder: r.folder ?? "",
-    format,
-    resourceType: type,
+    url: r.secure_url as string,
+    title: (r.public_id as string).split("/").pop(),
+    createdAt: r.created_at as string,
+    format: (r.format || "").toLowerCase(),
+    folder: r.folder || "",
   };
 }
 
 export async function GET() {
   try {
-    const exprBase = "public_id:famille/*"; // tous sous-dossiers
+    const exprBase = "public_id:famille/*"; // tout le dossier + sous-dossiers
+
     const [img, vid, raw] = await Promise.all([
-      cloudinary.search.expression(`${exprBase} AND resource_type:image`).max_results(150).sort_by("created_at","desc").execute(),
-      cloudinary.search.expression(`${exprBase} AND resource_type:video`).max_results(150).sort_by("created_at","desc").execute(),
-      cloudinary.search.expression(`${exprBase} AND resource_type:raw`).max_results(150).sort_by("created_at","desc").execute(),
+      cloudinary.search
+        .expression(`${exprBase} AND resource_type:image`)
+        .max_results(200)
+        .sort_by("created_at", "desc")
+        .execute(),
+      cloudinary.search
+        .expression(`${exprBase} AND resource_type:video`)
+        .max_results(200)
+        .sort_by("created_at", "desc")
+        .execute(),
+      cloudinary.search
+        .expression(`${exprBase} AND resource_type:raw`)
+        .max_results(200)
+        .sort_by("created_at", "desc")
+        .execute(),
     ]);
 
     const items = [

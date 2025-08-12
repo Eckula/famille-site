@@ -6,13 +6,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 type Item = {
   id: string;
-  kind: "image" | "video" | "file";
+  kind: "image" | "video" | "document";
   title: string;
   url: string;
   thumb?: string;
   createdAt: string;
-  folder?: string;
   format?: string;
+  folder?: string;
 };
 
 export default function GaleriePage() {
@@ -21,7 +21,7 @@ export default function GaleriePage() {
   const [selected, setSelected] = useState<Item | null>(null);
 
   // UI
-  const [tab, setTab] = useState<"all" | "images" | "videos" | "docs">("all");
+  const [tab, setTab] = useState<"all" | "images" | "videos" | "documents">("all");
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<"newest" | "oldest">("newest");
 
@@ -50,10 +50,10 @@ export default function GaleriePage() {
   const items = useMemo(() => {
     let data = [...raw];
 
-    // onglets
+    // filtres d'onglet
     if (tab === "images") data = data.filter((m) => m.kind === "image");
     if (tab === "videos") data = data.filter((m) => m.kind === "video");
-    if (tab === "docs")   data = data.filter((m) => m.kind === "file");
+    if (tab === "documents") data = data.filter((m) => m.kind === "document");
 
     // recherche
     const q = query.trim().toLowerCase();
@@ -69,15 +69,14 @@ export default function GaleriePage() {
     return data;
   }, [raw, tab, query, sort]);
 
-  // petite icône pour documents
   const docEmoji = (ext?: string) => {
     const e = (ext || "").toLowerCase();
     if (["pdf"].includes(e)) return "📄";
     if (["doc","docx"].includes(e)) return "📝";
     if (["xls","xlsx","csv"].includes(e)) return "📊";
     if (["ppt","pptx"].includes(e)) return "📽️";
-    if (["zip","rar","7z"].includes(e)) return "🗜️";
     if (["mp3","wav","aac","m4a","flac","ogg","oga"].includes(e)) return "🎵";
+    if (["zip","rar","7z","tar","gz"].includes(e)) return "🗜️";
     return "📎";
   };
 
@@ -92,21 +91,13 @@ export default function GaleriePage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
         {/* Onglets */}
         <div className="inline-flex rounded-full border border-white/20 bg-black/30 p-1">
-          {(["all", "images", "videos", "docs"] as const).map((k) => (
+          {(["all","images","videos","documents"] as const).map((k) => (
             <button
               key={k}
-              className={`px-4 py-2 rounded-full ${
-                tab === k ? "bg-white/20" : ""
-              }`}
+              className={`px-4 py-2 rounded-full ${tab === k ? "bg-white/20" : ""}`}
               onClick={() => setTab(k)}
             >
-              {k === "all"
-                ? "Tout"
-                : k === "images"
-                ? "Photos"
-                : k === "videos"
-                ? "Vidéos"
-                : "Documents"}
+              {k==="all" ? "Tout" : k==="images" ? "Photos" : k==="videos" ? "Vidéos" : "Documents"}
             </button>
           ))}
         </div>
@@ -165,8 +156,8 @@ export default function GaleriePage() {
             <button
               key={m.id}
               className="relative overflow-hidden rounded-lg border border-white/20 group"
-              onClick={() => (m.kind === "file" ? window.open(m.url, "_blank") : setSelected(m))}
-              title={m.kind === "file" ? "Ouvrir / Télécharger" : "Agrandir"}
+              onClick={() => (m.kind === "document" ? window.open(m.url, "_blank") : setSelected(m))}
+              title={m.kind === "document" ? "Ouvrir / Télécharger" : "Agrandir"}
             >
               <div className="aspect-video">
                 {m.kind === "image" ? (
@@ -185,7 +176,7 @@ export default function GaleriePage() {
                   />
                 ) : (
                   <div className="w-full h-full grid place-items-center bg-white/5 text-white/90">
-                    <div className="text-xl">
+                    <div className="text-base sm:text-lg">
                       {docEmoji(m.format)} {m.title}
                       {m.format ? `.${m.format}` : ""}
                     </div>
@@ -197,8 +188,8 @@ export default function GaleriePage() {
         </div>
       )}
 
-      {/* Lightbox pour images/vidéos uniquement */}
-      {selected && selected.kind !== "file" && (
+      {/* Lightbox images/vidéos */}
+      {selected && selected.kind !== "document" && (
         <div
           className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"
           onClick={() => setSelected(null)}
