@@ -3,6 +3,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 
 type Item = {
   id: string;
@@ -16,14 +17,27 @@ type Item = {
 };
 
 export default function GaleriePage() {
+  const router = useRouter();
+  const sp = useSearchParams();
+
+  // --- lecture du paramètre d'URL ?tab=all|images|videos|documents
+  const tabFromUrl = (sp.get("tab") || "all") as
+    | "all"
+    | "images"
+    | "videos"
+    | "documents";
+
   const [raw, setRaw] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Item | null>(null);
 
   // UI
-  const [tab, setTab] = useState<"all" | "images" | "videos" | "documents">("all");
+  const [tab, setTab] = useState<typeof tabFromUrl>(tabFromUrl);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<"newest" | "oldest">("newest");
+
+  // si l’URL change (back/forward), on resynchronise l’état
+  useEffect(() => setTab(tabFromUrl), [tabFromUrl]);
 
   const fetchList = useCallback(async () => {
     setLoading(true);
@@ -46,6 +60,15 @@ export default function GaleriePage() {
     if (selected) window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [selected]);
+
+  // changement d’onglet = MAJ état + MAJ URL (?tab=…)
+  const changeTab = (next: typeof tab) => {
+    setTab(next);
+    const q = new URLSearchParams(sp);
+    if (next === "all") q.delete("tab");
+    else q.set("tab", next);
+    router.replace(`/galerie?${q.toString()}`, { scroll: false });
+  };
 
   const items = useMemo(() => {
     let data = [...raw];
@@ -72,11 +95,11 @@ export default function GaleriePage() {
   const docEmoji = (ext?: string) => {
     const e = (ext || "").toLowerCase();
     if (["pdf"].includes(e)) return "📄";
-    if (["doc","docx"].includes(e)) return "📝";
-    if (["xls","xlsx","csv"].includes(e)) return "📊";
-    if (["ppt","pptx"].includes(e)) return "📽️";
-    if (["mp3","wav","aac","m4a","flac","ogg","oga"].includes(e)) return "🎵";
-    if (["zip","rar","7z","tar","gz"].includes(e)) return "🗜️";
+    if (["doc", "docx"].includes(e)) return "📝";
+    if (["xls", "xlsx", "csv"].includes(e)) return "📊";
+    if (["ppt", "pptx"].includes(e)) return "📽️";
+    if (["mp3", "wav", "aac", "m4a", "flac", "ogg", "oga"].includes(e)) return "🎵";
+    if (["zip", "rar", "7z", "tar", "gz"].includes(e)) return "🗜️";
     return "📎";
   };
 
@@ -91,13 +114,19 @@ export default function GaleriePage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
         {/* Onglets */}
         <div className="inline-flex rounded-full border border-white/20 bg-black/30 p-1">
-          {(["all","images","videos","documents"] as const).map((k) => (
+          {(["all", "images", "videos", "documents"] as const).map((k) => (
             <button
               key={k}
               className={`px-4 py-2 rounded-full ${tab === k ? "bg-white/20" : ""}`}
-              onClick={() => setTab(k)}
+              onClick={() => changeTab(k)}
             >
-              {k==="all" ? "Tout" : k==="images" ? "Photos" : k==="videos" ? "Vidéos" : "Documents"}
+              {k === "all"
+                ? "Tout"
+                : k === "images"
+                ? "Photos"
+                : k === "videos"
+                ? "Vidéos"
+                : "Documents"}
             </button>
           ))}
         </div>
@@ -156,7 +185,9 @@ export default function GaleriePage() {
             <button
               key={m.id}
               className="relative overflow-hidden rounded-lg border border-white/20 group"
-              onClick={() => (m.kind === "document" ? window.open(m.url, "_blank") : setSelected(m))}
+              onClick={() =>
+                m.kind === "document" ? window.open(m.url, "_blank") : setSelected(m)
+              }
               title={m.kind === "document" ? "Ouvrir / Télécharger" : "Agrandir"}
             >
               <div className="aspect-video">
