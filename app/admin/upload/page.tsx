@@ -1,25 +1,59 @@
+// app/admin/upload/page.tsx
 "use client";
+
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
-console.log("Cloudinary Config en prod :", {
+// 🔎 Panneau de debug côté client (variables NEXT_PUBLIC_*)
+function DebugVars() {
+  const cloudName   = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
+  const uploadPreset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET;
+
+  const ok = (v?: string) => (v ? "OK" : "❌ manquant");
+
+  if (typeof window === "undefined") return null;
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        bottom: 12,
+        right: 12,
+        background: "rgba(0,0,0,.65)",
+        color: "#fff",
+        padding: "10px 12px",
+        borderRadius: 8,
+        fontSize: 12,
+        zIndex: 9999,
+      }}
+    >
+      <div style={{ fontWeight: 700, marginBottom: 6 }}>Debug Cloudinary (client)</div>
+      <div>cloudName (NEXT_PUBLIC_*): <b>{cloudName || "—"}</b> ({ok(cloudName)})</div>
+      <div>uploadPreset (NEXT_PUBLIC_*): <b>{uploadPreset || "—"}</b> ({ok(uploadPreset)})</div>
+      <div style={{ marginTop: 6, opacity: .8 }}>
+        (Ces valeurs doivent être remplies en local & en prod)
+      </div>
+    </div>
+  );
+}
+
+// (facultatif) simple log pour voir si ça arrive au navigateur
+console.log("Cloudinary config (client) :", {
   cloudName: process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME,
-  apiKey: process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY,
-  apiSecret: process.env.NEXT_PUBLIC_CLOUDINARY_API_SECRET ? "OK (masqué)" : "Non défini"
+  uploadPreset: process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET,
 });
 
-
-const CLOUD = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME!;
+const CLOUD  = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME!;
 const PRESET = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET!;
 
 type Status = "idle" | "uploading" | "done" | "error";
-const MAX_SIZE = 50 * 1024 * 1024; // 50 Mo par fichier (ajuste si tu veux)
+const MAX_SIZE = 50 * 1024 * 1024;
 
 const RUBRICS = [
   { key: "Photos", label: "Photos" },
   { key: "Vidéos", label: "Vidéos" },
-  { key: "Documents", label: "Documents" }, // PDF, Word, etc.
-  { key: "Audio", label: "Audio" },         // mp3, wav…
+  { key: "Documents", label: "Documents" },
+  { key: "Audio", label: "Audio" },
   { key: "Autres", label: "Autres" },
 ];
 
@@ -33,11 +67,12 @@ export default function UploadPage() {
   const [progress, setProgress] = useState<number[]>([]);
   const [msg, setMsg] = useState("");
   const [rubric, setRubric] = useState<string>("Photos");
-  const [subFolder, setSubFolder] = useState<string>(""); // ex: Anniversaires/Paul-2025
+  const [subFolder, setSubFolder] = useState<string>("");
 
+  // Alerte si les variables client manquent
   useEffect(() => {
     if (!CLOUD || !PRESET) {
-      setMsg("⚠️ Vérifie NEXT_PUBLIC_CLOUDINARY_* dans .env.local");
+      setMsg("⚠️ Vérifie NEXT_PUBLIC_CLOUDINARY_* (cloud name + upload preset).");
     }
   }, []);
 
@@ -53,7 +88,11 @@ export default function UploadPage() {
     const arr = Array.from(list).filter(validate);
     setMsg("");
     setFiles(arr);
-    setPreviews(arr.map((f) => (f.type.startsWith("image/") || f.type.startsWith("video/") ? URL.createObjectURL(f) : "")));
+    setPreviews(arr.map((f) =>
+      f.type.startsWith("image/") || f.type.startsWith("video/")
+        ? URL.createObjectURL(f)
+        : ""
+    ));
     setProgress(new Array(arr.length).fill(0));
   }
 
@@ -72,9 +111,7 @@ export default function UploadPage() {
   }
 
   function buildFolder() {
-    // On range sous famille/<Rubrique>/<Sous-dossier facultatif>
-    const base = "famille";
-    const parts = [base, rubric];
+    const parts = ["famille", rubric];
     if (subFolder.trim()) parts.push(subFolder.trim());
     return parts.join("/");
   }
@@ -84,18 +121,21 @@ export default function UploadPage() {
       setMsg("Sélectionne au moins un fichier.");
       return;
     }
-    setStatus("uploading"); setMsg("");
+    if (!CLOUD || !PRESET) {
+      setMsg("⚠️ Config Cloudinary incomplète (NEXT_PUBLIC_…).");
+      return;
+    }
 
+    setStatus("uploading"); setMsg("");
     const folder = buildFolder();
 
-    // Lance tous les uploads en même temps (un XHR par fichier pour avoir les progress individuels)
     await Promise.allSettled(
       files.map((file, i) => {
         return new Promise<void>((resolve, reject) => {
           const form = new FormData();
           form.append("file", file);
           form.append("upload_preset", PRESET);
-          form.append("folder", folder); // Cloudinary rangera dans ce sous-dossier
+          form.append("folder", folder);
 
           const xhr = new XMLHttpRequest();
           xhr.open("POST", `https://api.cloudinary.com/v1_1/${CLOUD}/auto/upload`);
@@ -129,9 +169,12 @@ export default function UploadPage() {
   return (
     <main className="px-6 py-20 text-white">
       <h1 className="text-3xl font-bold mb-4">Uploader des médias</h1>
-      <p className="mb-6">Sélectionne plusieurs fichiers (images, vidéos, PDF, Word, audio, etc.). Ils seront rangés selon la rubrique choisie.</p>
+      <p className="mb-6">
+        Sélectionne plusieurs fichiers (images, vidéos, PDF, Word, audio, etc.).
+        Ils seront rangés selon la rubrique choisie.
+      </p>
 
-      {/* Choix de la rubrique + sous-dossier */}
+      {/* Choix rubrique + sous-dossier */}
       <div className="mb-4 flex flex-col sm:flex-row gap-3 max-w-xl">
         <select
           value={rubric}
@@ -148,7 +191,7 @@ export default function UploadPage() {
         />
       </div>
 
-      {/* Zone drag & drop + bouton choisir */}
+      {/* Zone DnD + bouton choisir */}
       <div
         onDrop={onDrop}
         onDragOver={onDragOver}
@@ -158,7 +201,6 @@ export default function UploadPage() {
           ref={inputRef}
           id="file-input"
           type="file"
-          // on autorise pratiquement tout ; Cloudinary détectera (image, video, raw)
           accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar"
           multiple
           className="hidden"
@@ -228,6 +270,9 @@ export default function UploadPage() {
       </div>
 
       {msg && <p className="mt-4">{msg}</p>}
+
+      {/* Panneau de debug client */}
+      <DebugVars />
     </main>
   );
 }
