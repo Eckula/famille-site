@@ -4,45 +4,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
-// 🔎 Panneau de debug côté client (variables NEXT_PUBLIC_*)
-function DebugVars() {
-  const cloudName   = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
-  const uploadPreset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET;
-
-  const ok = (v?: string) => (v ? "OK" : "❌ manquant");
-
-  if (typeof window === "undefined") return null;
-
-  return (
-    <div
-      style={{
-        position: "fixed",
-        bottom: 12,
-        right: 12,
-        background: "rgba(0,0,0,.65)",
-        color: "#fff",
-        padding: "10px 12px",
-        borderRadius: 8,
-        fontSize: 12,
-        zIndex: 9999,
-      }}
-    >
-      <div style={{ fontWeight: 700, marginBottom: 6 }}>Debug Cloudinary (client)</div>
-      <div>cloudName (NEXT_PUBLIC_*): <b>{cloudName || "—"}</b> ({ok(cloudName)})</div>
-      <div>uploadPreset (NEXT_PUBLIC_*): <b>{uploadPreset || "—"}</b> ({ok(uploadPreset)})</div>
-      <div style={{ marginTop: 6, opacity: .8 }}>
-        (Ces valeurs doivent être remplies en local & en prod)
-      </div>
-    </div>
-  );
-}
-
-// (facultatif) simple log pour voir si ça arrive au navigateur
-console.log("Cloudinary config (client) :", {
-  cloudName: process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME,
-  uploadPreset: process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET,
-});
-
 const CLOUD  = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME!;
 const PRESET = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET!;
 
@@ -69,7 +30,6 @@ export default function UploadPage() {
   const [rubric, setRubric] = useState<string>("Photos");
   const [subFolder, setSubFolder] = useState<string>("");
 
-  // Alerte si les variables client manquent
   useEffect(() => {
     if (!CLOUD || !PRESET) {
       setMsg("⚠️ Vérifie NEXT_PUBLIC_CLOUDINARY_* (cloud name + upload preset).");
@@ -270,9 +230,6 @@ export default function UploadPage() {
       </div>
 
       {msg && <p className="mt-4">{msg}</p>}
-
-      {/* Panneau de debug client */}
-      <DebugVars />
     </main>
   );
 }
