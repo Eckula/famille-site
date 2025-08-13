@@ -16,29 +16,39 @@ type Item = {
   folder?: string;
 };
 
+// --- types d'onglet + liste autorisée (sécurité & typage)
+const allowedTabs = ["all", "images", "videos", "documents"] as const;
+type Tab = typeof allowedTabs[number];
+
 export default function GaleriePage() {
   const router = useRouter();
-  const sp = useSearchParams();
+  const searchParams = useSearchParams();
 
-  // --- lecture du paramètre d'URL ?tab=all|images|videos|documents
-  const tabFromUrl = (sp.get("tab") || "all") as
-    | "all"
-    | "images"
-    | "videos"
-    | "documents";
+  // --- lecture sûre du paramètre ?tab=...
+  const rawTab = (searchParams?.get("tab") ?? "all").toLowerCase();
+  const initialTab: Tab = (allowedTabs as readonly string[]).includes(rawTab as any)
+    ? (rawTab as Tab)
+    : "all";
 
   const [raw, setRaw] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Item | null>(null);
 
-  // UI
-  const [tab, setTab] = useState<typeof tabFromUrl>(tabFromUrl);
+  // UI state
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<"newest" | "oldest">("newest");
 
   // si l’URL change (back/forward), on resynchronise l’état
-  useEffect(() => setTab(tabFromUrl), [tabFromUrl]);
+  useEffect(() => {
+    const nextRaw = (searchParams?.get("tab") ?? "all").toLowerCase();
+    const nextTab: Tab = (allowedTabs as readonly string[]).includes(nextRaw as any)
+      ? (nextRaw as Tab)
+      : "all";
+    setTab(nextTab);
+  }, [searchParams]);
 
+  // charge la liste
   const fetchList = useCallback(async () => {
     setLoading(true);
     try {
@@ -62,12 +72,13 @@ export default function GaleriePage() {
   }, [selected]);
 
   // changement d’onglet = MAJ état + MAJ URL (?tab=…)
-  const changeTab = (next: typeof tab) => {
+  const changeTab = (next: Tab) => {
     setTab(next);
-    const q = new URLSearchParams(sp);
+    const q = new URLSearchParams(searchParams?.toString());
     if (next === "all") q.delete("tab");
     else q.set("tab", next);
-    router.replace(`/galerie?${q.toString()}`, { scroll: false });
+    const qs = q.toString();
+    router.replace(qs ? `/galerie?${qs}` : `/galerie`, { scroll: false });
   };
 
   const items = useMemo(() => {
@@ -103,6 +114,12 @@ export default function GaleriePage() {
     return "📎";
   };
 
+  // calcule la rubrique à passer à /admin/upload selon l’onglet
+  const rubricForUpload =
+    tab === "images" ? "Photos" :
+    tab === "videos" ? "Vidéos" :
+    tab === "documents" ? "Documents" : "Photos";
+
   return (
     <main className="px-6 py-20 text-white">
       <h1 className="text-3xl font-bold mb-2">Galerie</h1>
@@ -120,13 +137,7 @@ export default function GaleriePage() {
               className={`px-4 py-2 rounded-full ${tab === k ? "bg-white/20" : ""}`}
               onClick={() => changeTab(k)}
             >
-              {k === "all"
-                ? "Tout"
-                : k === "images"
-                ? "Photos"
-                : k === "videos"
-                ? "Vidéos"
-                : "Documents"}
+              {k === "all" ? "Tout" : k === "images" ? "Photos" : k === "videos" ? "Vidéos" : "Documents"}
             </button>
           ))}
         </div>
@@ -155,9 +166,9 @@ export default function GaleriePage() {
             {loading ? "Chargement…" : "Rafraîchir"}
           </button>
 
-          {/* ➕ Ajouter des médias */}
+          {/* ➕ Ajouter des médias (pré-sélectionne la rubrique dans /admin/upload) */}
           <Link
-            href="/admin/upload"
+            href={`/admin/upload?rubric=${encodeURIComponent(rubricForUpload)}`}
             className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-center hover:bg-white/20"
             title="Ajouter des médias"
           >
@@ -173,7 +184,7 @@ export default function GaleriePage() {
         <div className="text-white/80">
           <p>Aucun élément.</p>
           <Link
-            href="/admin/upload"
+            href={`/admin/upload?rubric=${encodeURIComponent(rubricForUpload)}`}
             className="inline-block mt-3 rounded-lg border border-white/20 bg-white/10 px-4 py-2 hover:bg-white/20"
           >
             ➕ Ajouter des médias
@@ -185,9 +196,7 @@ export default function GaleriePage() {
             <button
               key={m.id}
               className="relative overflow-hidden rounded-lg border border-white/20 group"
-              onClick={() =>
-                m.kind === "document" ? window.open(m.url, "_blank") : setSelected(m)
-              }
+              onClick={() => (m.kind === "document" ? window.open(m.url, "_blank") : setSelected(m))}
               title={m.kind === "document" ? "Ouvrir / Télécharger" : "Agrandir"}
             >
               <div className="aspect-video">
