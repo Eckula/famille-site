@@ -59,17 +59,17 @@ async function search(expr: string) {
 
 export async function GET() {
   try {
-    // 1) Tentative stricte : public_id
+    // 1) Recherche stricte
     let resources = await search('public_id:famille/*');
     console.log("[media/list] Trouvés (public_id) :", resources.map(r => r.public_id));
 
-    // 2) Tentative plus souple : folder
+    // 2) Recherche plus souple
     if (!resources.length) {
       resources = await search('folder:famille*');
       console.log("[media/list] Trouvés (folder) :", resources.map(r => r.public_id));
     }
 
-    // 3) Filet de sécurité : derniers uploads
+    // 3) Derniers uploads (filet de sécu)
     if (!resources.length) {
       const recent = await cloudinary.search
         .expression('resource_type:image OR resource_type:video OR resource_type:raw')
