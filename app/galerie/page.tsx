@@ -2,7 +2,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 
 type Item = {
@@ -16,15 +16,14 @@ type Item = {
   folder?: string;
 };
 
-// --- types d'onglet + liste autorisée (sécurité & typage)
 const allowedTabs = ["all", "images", "videos", "documents"] as const;
 type Tab = typeof allowedTabs[number];
 
-export default function GaleriePage() {
+function GalerieInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // --- lecture sûre du paramètre ?tab=...
+  // lecture sûre de ?tab=...
   const rawTab = (searchParams?.get("tab") ?? "all").toLowerCase();
   const initialTab: Tab = (allowedTabs as readonly string[]).includes(rawTab as any)
     ? (rawTab as Tab)
@@ -39,16 +38,17 @@ export default function GaleriePage() {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<"newest" | "oldest">("newest");
 
-  // si l’URL change (back/forward), on resynchronise l’état
+  // resync état quand l’URL change
   useEffect(() => {
     const nextRaw = (searchParams?.get("tab") ?? "all").toLowerCase();
     const nextTab: Tab = (allowedTabs as readonly string[]).includes(nextRaw as any)
       ? (nextRaw as Tab)
       : "all";
     setTab(nextTab);
-  }, [searchParams]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams?.toString()]);
 
-  // charge la liste
+  // charger la liste
   const fetchList = useCallback(async () => {
     setLoading(true);
     try {
@@ -64,14 +64,14 @@ export default function GaleriePage() {
     fetchList();
   }, [fetchList]);
 
-  // fermer la lightbox avec Échap
+  // Échap ferme la lightbox
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setSelected(null);
     if (selected) window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [selected]);
 
-  // changement d’onglet = MAJ état + MAJ URL (?tab=…)
+  // MAJ onglet + URL (?tab=…)
   const changeTab = (next: Tab) => {
     setTab(next);
     const q = new URLSearchParams(searchParams?.toString());
@@ -84,16 +84,13 @@ export default function GaleriePage() {
   const items = useMemo(() => {
     let data = [...raw];
 
-    // filtres d'onglet
     if (tab === "images") data = data.filter((m) => m.kind === "image");
     if (tab === "videos") data = data.filter((m) => m.kind === "video");
     if (tab === "documents") data = data.filter((m) => m.kind === "document");
 
-    // recherche
     const q = query.trim().toLowerCase();
     if (q) data = data.filter((m) => m.title.toLowerCase().includes(q));
 
-    // tri
     data.sort((a, b) =>
       sort === "newest"
         ? +new Date(b.createdAt) - +new Date(a.createdAt)
@@ -114,7 +111,6 @@ export default function GaleriePage() {
     return "📎";
   };
 
-  // calcule la rubrique à passer à /admin/upload selon l’onglet
   const rubricForUpload =
     tab === "images" ? "Photos" :
     tab === "videos" ? "Vidéos" :
@@ -152,7 +148,7 @@ export default function GaleriePage() {
           />
           <select
             value={sort}
-            onChange={(e) => setSort(e.target.value as any)}
+            onChange={(e) => setSort(e.target.value as "newest" | "oldest")}
             className="rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none"
           >
             <option value="newest">Plus récents</option>
@@ -271,5 +267,13 @@ export default function GaleriePage() {
         </div>
       )}
     </main>
+  );
+}
+
+export default function GaleriePage() {
+  return (
+    <Suspense fallback={<main className="px-6 py-20 text-white">Chargement…</main>}>
+      <GalerieInner />
+    </Suspense>
   );
 }
