@@ -2,11 +2,12 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 type Item = {
   id: string;
+  public_id: string;
   kind: "image" | "video" | "document";
   title: string;
   url: string;
@@ -16,45 +17,56 @@ type Item = {
   folder?: string;
 };
 
-const allowedTabs = ["all", "images", "videos", "documents"] as const;
-type Tab = typeof allowedTabs[number];
+type TabKey = "all" | "images" | "videos" | "documents";
 
-function GalerieInner() {
+const TAB_LABEL: Record<TabKey, string> = {
+  all: "Tout",
+  images: "Photos",
+  videos: "Vidéos",
+  documents: "Documents",
+};
+
+export default function GaleriePage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
 
-  // lecture sûre de ?tab=...
-  const rawTab = (searchParams?.get("tab") ?? "all").toLowerCase();
-  const initialTab: Tab = (allowedTabs as readonly string[]).includes(rawTab as any)
-    ? (rawTab as Tab)
-    : "all";
-
+  // Données
   const [raw, setRaw] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Item | null>(null);
 
-  // UI state
-  const [tab, setTab] = useState<Tab>(initialTab);
+  // UI
+  const [tab, setTab] = useState<TabKey>("all");
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<"newest" | "oldest">("newest");
 
-  // resync état quand l’URL change
+  // -------- Paramètre d’URL ?tab=... (robuste, sans useSearchParams) --------
   useEffect(() => {
-    const nextRaw = (searchParams?.get("tab") ?? "all").toLowerCase();
-    const nextTab: Tab = (allowedTabs as readonly string[]).includes(nextRaw as any)
-      ? (nextRaw as Tab)
-      : "all";
-    setTab(nextTab);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams?.toString()]);
+    if (typeof window === "undefined") return;
+    const sp = new URLSearchParams(window.location.search);
+    const q = (sp.get("tab") || "all") as TabKey;
+    if (q === "all" || q === "images" || q === "videos" || q === "documents") {
+      setTab(q);
+    } else {
+      setTab("all");
+    }
+  }, []);
 
-  // charger la liste
+  // Aligne l’URL quand on clique un onglet
+  const changeTab = (next: TabKey) => {
+    setTab(next);
+    // on garde la même page mais on met à jour ?tab=...
+    router.replace(`/galerie?tab=${next}`);
+  };
+
+  // -------- Récupération de la liste --------
   const fetchList = useCallback(async () => {
     setLoading(true);
     try {
       const r = await fetch("/api/media/list", { cache: "no-store" });
       const j = await r.json();
       setRaw(j.items ?? []);
+    } catch {
+      // noop: on laisse la liste vide si échec
     } finally {
       setLoading(false);
     }
@@ -64,33 +76,27 @@ function GalerieInner() {
     fetchList();
   }, [fetchList]);
 
-  // Échap ferme la lightbox
+  // fermer la lightbox avec Échap
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setSelected(null);
     if (selected) window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [selected]);
 
-  // MAJ onglet + URL (?tab=…)
-  const changeTab = (next: Tab) => {
-    setTab(next);
-    const q = new URLSearchParams(searchParams?.toString());
-    if (next === "all") q.delete("tab");
-    else q.set("tab", next);
-    const qs = q.toString();
-    router.replace(qs ? `/galerie?${qs}` : `/galerie`, { scroll: false });
-  };
-
+  // -------- Filtres + recherche + tri --------
   const items = useMemo(() => {
     let data = [...raw];
 
+    // filtre par onglet
     if (tab === "images") data = data.filter((m) => m.kind === "image");
     if (tab === "videos") data = data.filter((m) => m.kind === "video");
     if (tab === "documents") data = data.filter((m) => m.kind === "document");
 
+    // recherche
     const q = query.trim().toLowerCase();
     if (q) data = data.filter((m) => m.title.toLowerCase().includes(q));
 
+    // tri
     data.sort((a, b) =>
       sort === "newest"
         ? +new Date(b.createdAt) - +new Date(a.createdAt)
@@ -100,6 +106,7 @@ function GalerieInner() {
     return data;
   }, [raw, tab, query, sort]);
 
+  // emoji pour documents
   const docEmoji = (ext?: string) => {
     const e = (ext || "").toLowerCase();
     if (["pdf"].includes(e)) return "📄";
@@ -111,10 +118,9 @@ function GalerieInner() {
     return "📎";
   };
 
+  // déduire la rubrique pour l’upload selon l’onglet actif
   const rubricForUpload =
-    tab === "images" ? "Photos" :
-    tab === "videos" ? "Vidéos" :
-    tab === "documents" ? "Documents" : "Photos";
+    tab === "images" ? "Photos" : tab === "videos" ? "Vidéos" : tab === "documents" ? "Documents" : "Photos";
 
   return (
     <main className="px-6 py-20 text-white">
@@ -133,7 +139,7 @@ function GalerieInner() {
               className={`px-4 py-2 rounded-full ${tab === k ? "bg-white/20" : ""}`}
               onClick={() => changeTab(k)}
             >
-              {k === "all" ? "Tout" : k === "images" ? "Photos" : k === "videos" ? "Vidéos" : "Documents"}
+              {TAB_LABEL[k]}
             </button>
           ))}
         </div>
@@ -146,14 +152,16 @@ function GalerieInner() {
             placeholder="Rechercher par titre…"
             className="w-full sm:w-72 rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none focus:ring-2 focus:ring-yellow-300/60"
           />
+
           <select
             value={sort}
-            onChange={(e) => setSort(e.target.value as "newest" | "oldest")}
+            onChange={(e) => setSort(e.target.value as any)}
             className="rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none"
           >
             <option value="newest">Plus récents</option>
             <option value="oldest">Plus anciens</option>
           </select>
+
           <button
             onClick={fetchList}
             className="rounded-lg border border-white/20 bg-black/30 px-3 py-2"
@@ -162,7 +170,7 @@ function GalerieInner() {
             {loading ? "Chargement…" : "Rafraîchir"}
           </button>
 
-          {/* ➕ Ajouter des médias (pré-sélectionne la rubrique dans /admin/upload) */}
+          {/* ➕ Ajouter des médias : on pré-remplit la rubrique via la query */}
           <Link
             href={`/admin/upload?rubric=${encodeURIComponent(rubricForUpload)}`}
             className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-center hover:bg-white/20"
@@ -192,7 +200,9 @@ function GalerieInner() {
             <button
               key={m.id}
               className="relative overflow-hidden rounded-lg border border-white/20 group"
-              onClick={() => (m.kind === "document" ? window.open(m.url, "_blank") : setSelected(m))}
+              onClick={() =>
+                m.kind === "document" ? window.open(m.url, "_blank") : setSelected(m)
+              }
               title={m.kind === "document" ? "Ouvrir / Télécharger" : "Agrandir"}
             >
               <div className="aspect-video">
@@ -267,13 +277,5 @@ function GalerieInner() {
         </div>
       )}
     </main>
-  );
-}
-
-export default function GaleriePage() {
-  return (
-    <Suspense fallback={<main className="px-6 py-20 text-white">Chargement…</main>}>
-      <GalerieInner />
-    </Suspense>
   );
 }

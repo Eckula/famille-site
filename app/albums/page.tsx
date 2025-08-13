@@ -1,5 +1,5 @@
-// app/documents/page.tsx
+// app/albums/page.tsx
 import { redirect } from "next/navigation";
 export default function Page() {
-  redirect("/galerie?tab=documents");
+  redirect("/galerie?tab=all");
 }
