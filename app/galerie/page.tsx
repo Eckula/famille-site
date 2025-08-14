@@ -1,4 +1,5 @@
 // app/galerie/page.tsx
+// version compacte : grille 2/3 colonnes, lightbox, supprimer/déplacer
 "use client";
 
 import Link from "next/link";
@@ -6,8 +7,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Kind = "image" | "video" | "document";
 type Item = {
-  id: string;           // asset_id
-  public_id: string;    // cloudinary public_id
+  id: string;
+  public_id: string;
   kind: Kind;
   title: string;
   url: string;
@@ -16,19 +17,14 @@ type Item = {
   format?: string;
   folder?: string;
 };
-
 type Tab = "all" | "images" | "videos" | "documents";
 
-// util: lecture sûre du tab depuis l'URL
 function getTabFromUrl(): Tab {
   if (typeof window === "undefined") return "all";
   const sp = new URLSearchParams(window.location.search);
   const t = (sp.get("tab") || "all").toLowerCase();
-  if (t === "images" || t === "videos" || t === "documents" || t === "all") return t;
-  return "all";
+  return (["all","images","videos","documents"].includes(t) ? (t as Tab) : "all");
 }
-
-// petit helper doc emoji
 const docEmoji = (ext?: string) => {
   const e = (ext || "").toLowerCase();
   if (["pdf"].includes(e)) return "📄";
@@ -44,315 +40,200 @@ export default function GaleriePage() {
   const [raw, setRaw] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // sélection multiple
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const toggleSel = (id: string) =>
-    setSelectedIds((prev) => {
-      const n = new Set(prev);
-      if (n.has(id)) n.delete(id); else n.add(id);
-      return n;
-    });
-  const clearSel = () => setSelectedIds(new Set());
-
-  // filtres UI
   const [tab, setTab] = useState<Tab>("all");
   const [query, setQuery] = useState("");
-  const [sort, setSort] = useState<"newest" | "oldest">("newest");
+  const [sort, setSort] = useState<"newest"|"oldest">("newest");
 
-  // lightbox
-  const [lbOpen, setLbOpen] = useState(false);
-  const [lbIndex, setLbIndex] = useState(0); // index dans items filtrés d'images/vidéos
-  const swipeStartX = useRef<number | null>(null);
-
-  // champ "déplacer vers"
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const toggleSel = (id: string) => setSelectedIds(s => (s.has(id) ? new Set([...s].filter(x=>x!==id)) : new Set(s).add(id)));
+  const clearSel = () => setSelectedIds(new Set());
   const [moveFolder, setMoveFolder] = useState("famille/Photos");
 
-  // fetch API
+  const [lbOpen, setLbOpen] = useState(false);
+  const [lbIndex, setLbIndex] = useState(0);
+  const swipeStartX = useRef<number|null>(null);
+
   const fetchList = useCallback(async () => {
     setLoading(true);
     try {
       const r = await fetch("/api/media/list", { cache: "no-store" });
       const j = await r.json();
       setRaw(j.items ?? []);
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   }, []);
 
   useEffect(() => {
-    // init tab depuis URL
     setTab(getTabFromUrl());
     fetchList();
   }, [fetchList]);
 
-  // items filtrés/triés
   const items = useMemo(() => {
     let data = [...raw];
+    if (tab==="images") data = data.filter(x=>x.kind==="image");
+    if (tab==="videos") data = data.filter(x=>x.kind==="video");
+    if (tab==="documents") data = data.filter(x=>x.kind==="document");
 
-    // filtre tab
-    if (tab === "images") data = data.filter((m) => m.kind === "image");
-    if (tab === "videos") data = data.filter((m) => m.kind === "video");
-    if (tab === "documents") data = data.filter((m) => m.kind === "document");
-
-    // recherche
     const q = query.trim().toLowerCase();
-    if (q) data = data.filter((m) => m.title.toLowerCase().includes(q));
+    if (q) data = data.filter(x => x.title.toLowerCase().includes(q));
 
-    // tri
-    data.sort((a, b) =>
-      sort === "newest"
+    data.sort((a,b)=>
+      sort==="newest"
         ? +new Date(b.createdAt) - +new Date(a.createdAt)
         : +new Date(a.createdAt) - +new Date(b.createdAt)
     );
-
     return data;
   }, [raw, tab, query, sort]);
 
-  // items « affichables dans lightbox » (images + vidéos uniquement)
-  const galleryPlayable = useMemo(
-    () => items.filter((m) => m.kind === "image" || m.kind === "video"),
-    [items]
-  );
+  const playable = useMemo(()=> items.filter(x=>x.kind!=="document"), [items]);
 
-  // ouvrir lightbox sur index d’un item (dans galleryPlayable)
-  const openLightboxFor = (itemId: string) => {
-    const idx = galleryPlayable.findIndex((m) => m.id === itemId);
-    if (idx >= 0) {
-      setLbIndex(idx);
-      setLbOpen(true);
-    }
+  const openLightboxFor = (id: string) => {
+    const idx = playable.findIndex(x=>x.id===id);
+    if (idx>=0) { setLbIndex(idx); setLbOpen(true); }
   };
 
-  // clavier: ← → Échap
   useEffect(() => {
     if (!lbOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setLbOpen(false);
-      if (e.key === "ArrowLeft") setLbIndex((i) => (i - 1 + galleryPlayable.length) % galleryPlayable.length);
-      if (e.key === "ArrowRight") setLbIndex((i) => (i + 1) % galleryPlayable.length);
+      if (e.key==="Escape") setLbOpen(false);
+      if (e.key==="ArrowLeft") setLbIndex(i => (i-1+playable.length)%playable.length);
+      if (e.key==="ArrowRight") setLbIndex(i => (i+1)%playable.length);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [lbOpen, galleryPlayable.length]);
+  }, [lbOpen, playable.length]);
 
-  // actions: supprimer / déplacer
   async function doDelete() {
-    if (selectedIds.size === 0) return;
+    if (selectedIds.size===0) return;
     if (!confirm(`Supprimer ${selectedIds.size} élément(s) ?`)) return;
     const res = await fetch("/api/media/delete", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids: Array.from(selectedIds) }),
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ ids: Array.from(selectedIds) })
     });
     const j = await res.json();
     if (!res.ok) alert(j?.error || "Erreur suppression.");
-    clearSel();
-    fetchList();
+    clearSel(); fetchList();
   }
 
   async function doMove() {
-    if (selectedIds.size === 0) return;
-    if (!moveFolder.trim()) {
-      alert("Renseigne un dossier cible (ex: famille/Photos/Anniversaires).");
-      return;
-    }
+    if (selectedIds.size===0) return;
+    if (!moveFolder.trim()) { alert("Renseigne un dossier cible (ex: famille/Photos/Anniversaires)"); return; }
     const res = await fetch("/api/media/move", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids: Array.from(selectedIds), toFolder: moveFolder.trim() }),
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ ids: Array.from(selectedIds), toFolder: moveFolder.trim() })
     });
     const j = await res.json();
-    if (!res.ok) {
-      alert(j?.error || "Erreur déplacement.");
-      return;
-    }
-    clearSel();
-    fetchList();
+    if (!res.ok) { alert(j?.error || "Erreur déplacement."); return; }
+    clearSel(); fetchList();
   }
 
-  // swipe mobile dans lightbox
-  const onTouchStart = (e: React.TouchEvent) => {
-    swipeStartX.current = e.touches[0].clientX;
-  };
+  const onTouchStart = (e: React.TouchEvent) => { swipeStartX.current = e.touches[0].clientX; };
   const onTouchEnd = (e: React.TouchEvent) => {
-    if (swipeStartX.current == null) return;
+    if (swipeStartX.current==null) return;
     const dx = e.changedTouches[0].clientX - swipeStartX.current;
     swipeStartX.current = null;
-    if (Math.abs(dx) < 40) return; // seuil
-    if (dx > 0) setLbIndex((i) => (i - 1 + galleryPlayable.length) % galleryPlayable.length);
-    else setLbIndex((i) => (i + 1) % galleryPlayable.length);
+    if (Math.abs(dx)<40) return;
+    if (dx>0) setLbIndex(i=>(i-1+playable.length)%playable.length);
+    else setLbIndex(i=>(i+1)%playable.length);
   };
 
   return (
     <main className="px-6 py-24 text-white">
       <h1 className="text-3xl font-bold mb-2">Galerie</h1>
-      <p className="mb-6 text-white/80">
-        Photos, vidéos et documents du dossier Cloudinary <code>famille</code>.
-      </p>
+      <p className="mb-6 text-white/80">Photos, vidéos et documents du dossier Cloudinary <code>famille</code>.</p>
 
-      {/* Barre d'outils */}
+      {/* Outils */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
-        {/* Onglets */}
         <div className="inline-flex rounded-full border border-white/20 bg-black/30 p-1 gap-2">
-          {(["all","images","videos","documents"] as const).map((k) => (
+          {(["all","images","videos","documents"] as const).map(k => (
             <Link
-              key={k}
+              key={k} prefetch={false}
               href={`/galerie?tab=${k}`}
-              onClick={() => setTab(k)}
-              className={`px-4 py-2 rounded-full ${tab === k ? "bg-white/20" : "hover:bg-white/10"}`}
-              prefetch={false}
+              onClick={()=>setTab(k)}
+              className={`px-4 py-2 rounded-full ${tab===k ? "bg-white/20" : "hover:bg-white/10"}`}
             >
               {k==="all" ? "Tout" : k==="images" ? "Photos" : k==="videos" ? "Vidéos" : "Documents"}
             </Link>
           ))}
         </div>
 
-        {/* Recherche + tri + refresh + ajouter */}
         <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Rechercher par titre…"
-            className="w-full sm:w-72 rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none focus:ring-2 focus:ring-yellow-300/60"
-          />
-          <select
-            value={sort}
-            onChange={(e) => setSort(e.target.value as any)}
-            className="rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none"
-          >
+          <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher par titre…"
+                 className="w-full sm:w-72 rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none focus:ring-2 focus:ring-yellow-300/60"/>
+          <select value={sort} onChange={e=>setSort(e.target.value as any)}
+                  className="rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none">
             <option value="newest">Plus récents</option>
             <option value="oldest">Plus anciens</option>
           </select>
-          <button
-            onClick={fetchList}
-            className="rounded-lg border border-white/20 bg-black/30 px-3 py-2"
-            disabled={loading}
-          >
+          <button onClick={fetchList} disabled={loading}
+                  className="rounded-lg border border-white/20 bg-black/30 px-3 py-2">
             {loading ? "Chargement…" : "Rafraîchir"}
           </button>
-
           <Link
-            href={`/admin/upload?rubric=${
-              tab === "images" ? "Photos" : tab === "videos" ? "Vidéos" : tab === "documents" ? "Documents" : "Photos"
-            }`}
-            className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-center hover:bg-white/20"
-          >
+            href={`/admin/upload?rubric=${tab==="images"?"Photos":tab==="videos"?"Vidéos":tab==="documents"?"Documents":"Photos"}`}
+            className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-center hover:bg-white/20">
             ➕ Ajouter des médias
           </Link>
         </div>
       </div>
 
-      {/* Barre d'actions sélection */}
-      {selectedIds.size > 0 && (
+      {/* Actions de sélection */}
+      {selectedIds.size>0 && (
         <div className="mb-4 flex flex-col md:flex-row items-start md:items-center gap-3 rounded-lg border border-white/20 bg-black/30 p-3">
-          <div className="text-sm">
-            {selectedIds.size} élément(s) sélectionné(s)
-          </div>
+          <div className="text-sm">{selectedIds.size} élément(s) sélectionné(s)</div>
           <div className="flex gap-2">
-            <button
-              onClick={doDelete}
-              className="px-3 py-2 rounded-lg bg-red-500/90 hover:bg-red-500 text-black"
-            >
-              Supprimer
-            </button>
+            <button onClick={doDelete} className="px-3 py-2 rounded-lg bg-red-500/90 hover:bg-red-500 text-black">Supprimer</button>
             <div className="flex items-center gap-2">
-              <input
-                value={moveFolder}
-                onChange={(e) => setMoveFolder(e.target.value)}
-                placeholder="famille/Photos/Anniversaires"
-                className="rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none"
-              />
-              <button
-                onClick={doMove}
-                className="px-3 py-2 rounded-lg bg-yellow-500 hover:bg-yellow-400 text-black"
-              >
+              <input value={moveFolder} onChange={e=>setMoveFolder(e.target.value)}
+                     placeholder="famille/Photos/Anniversaires"
+                     className="rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none"/>
+              <button onClick={doMove} className="px-3 py-2 rounded-lg bg-yellow-500 hover:bg-yellow-400 text-black">
                 Déplacer ➜
               </button>
             </div>
-            <button
-              onClick={clearSel}
-              className="px-3 py-2 rounded-lg border border-white/30 hover:bg-white/10"
-            >
-              Annuler
-            </button>
+            <button onClick={clearSel} className="px-3 py-2 rounded-lg border border-white/30 hover:bg-white/10">Annuler</button>
           </div>
         </div>
       )}
 
-      {/* Grille */}
+      {/* Grille 2/3 colonnes */}
       {loading ? (
         <p className="text-white/70">Chargement…</p>
       ) : items.length === 0 ? (
         <div className="text-white/80">
           <p>Aucun élément.</p>
-          <Link
-            href="/admin/upload"
-            className="inline-block mt-3 rounded-lg border border-white/20 bg-white/10 px-4 py-2 hover:bg-white/20"
-          >
+          <Link href="/admin/upload" className="inline-block mt-3 rounded-lg border border-white/20 bg-white/10 px-4 py-2 hover:bg-white/20">
             ➕ Ajouter des médias
           </Link>
         </div>
       ) : (
-        <div
-          className="
-            grid gap-4
-            grid-cols-1
-            sm:grid-cols-2
-            md:grid-cols-3
-            lg:grid-cols-4
-          "
-        >
-          {items.map((m) => {
-            const isDoc = m.kind === "document";
-            const isVid = m.kind === "video";
-            const isImg = m.kind === "image";
-
+        <div className="grid gap-4 grid-cols-2 lg:grid-cols-3">
+          {items.map(m => {
+            const isImg = m.kind==="image";
+            const isVid = m.kind==="video";
             return (
               <div key={m.id} className="relative overflow-hidden rounded-lg border border-white/20 group">
-                {/* case à cocher */}
                 <label className="absolute top-2 left-2 z-10 inline-flex items-center gap-2 bg-black/50 rounded px-2 py-1 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.has(m.id)}
-                    onChange={() => toggleSel(m.id)}
-                  />
+                  <input type="checkbox" checked={selectedIds.has(m.id)} onChange={()=>toggleSel(m.id)} />
                   Sélection
                 </label>
 
                 <div className="aspect-video">
                   {isImg ? (
                     <img
-                      src={m.thumb ?? m.url}
-                      alt={m.title}
+                      src={m.thumb ?? m.url} alt={m.title}
                       className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                      loading="lazy"
-                      onClick={() => openLightboxFor(m.id)}
+                      loading="lazy" onClick={()=>openLightboxFor(m.id)}
                     />
                   ) : isVid ? (
                     <div className="relative w-full h-full bg-black/40">
-                      <video
-                        src={m.url}
-                        className="w-full h-full object-cover"
-                        preload="metadata"
-                        muted
-                        playsInline
-                        onClick={() => openLightboxFor(m.id)}
-                      />
+                      <video src={m.url} className="w-full h-full object-cover" preload="metadata" muted playsInline
+                             onClick={()=>openLightboxFor(m.id)} />
                       <div className="absolute inset-0 grid place-items-center text-3xl opacity-80 pointer-events-none">▶</div>
                     </div>
                   ) : (
-                    // Documents : lien qui ouvre dans un nouvel onglet (PDF ok)
-                    <a
-                      href={m.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="w-full h-full grid place-items-center bg-white/5 text-white/90"
-                      title="Ouvrir / Télécharger"
-                    >
-                      <div className="text-base sm:text-lg">
-                        {docEmoji(m.format)} {m.title}
-                        {m.format ? `.${m.format}` : ""}
-                      </div>
+                    <a href={m.url} target="_blank" rel="noopener noreferrer"
+                       className="w-full h-full grid place-items-center bg-white/5 text-white/90" title="Ouvrir / Télécharger">
+                      <div className="text-base sm:text-lg">{docEmoji(m.format)} {m.title}{m.format?`.${m.format}`:""}</div>
                     </a>
                   )}
                 </div>
@@ -362,78 +243,32 @@ export default function GaleriePage() {
         </div>
       )}
 
-      {/* Lightbox images/vidéos */}
-      {lbOpen && galleryPlayable.length > 0 && (
-        <div
-          className="fixed inset-0 bg-black/85 flex items-center justify-center z-50 p-4"
-          onClick={() => setLbOpen(false)}
-          onTouchStart={onTouchStart}
-          onTouchEnd={onTouchEnd}
-        >
-          <div
-            className="relative max-w-6xl w-full max-h-[90vh]"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Compteur */}
+      {/* Lightbox */}
+      {lbOpen && playable.length>0 && (
+        <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-50 p-4"
+             onClick={()=>setLbOpen(false)} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+          <div className="relative max-w-6xl w-full max-h-[90vh]" onClick={(e)=>e.stopPropagation()}>
             <div className="absolute top-2 right-2 z-10 rounded-full bg-black/60 px-3 py-1 text-sm">
-              {lbIndex + 1} / {galleryPlayable.length}
+              {lbIndex+1} / {playable.length}
             </div>
+            <button onClick={()=>setLbOpen(false)}
+                    className="absolute top-2 left-2 z-10 rounded-full border border-white/30 px-3 py-1 bg-black/40" aria-label="Fermer">✕</button>
+            <button onClick={()=>setLbIndex(i=>(i-1+playable.length)%playable.length)}
+                    className="absolute left-2 top-1/2 -translate-y-1/2 z-10 h-12 w-12 rounded-full bg-black/60 hover:bg-black/80 grid place-items-center text-2xl" aria-label="Précédent">←</button>
+            <button onClick={()=>setLbIndex(i=>(i+1)%playable.length)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 z-10 h-12 w-12 rounded-full bg-black/60 hover:bg-black/80 grid place-items-center text-2xl" aria-label="Suivant">→</button>
 
-            {/* Bouton fermer */}
-            <button
-              onClick={() => setLbOpen(false)}
-              className="absolute top-2 left-2 z-10 rounded-full border border-white/30 px-3 py-1 bg-black/40"
-              aria-label="Fermer"
-            >
-              ✕
-            </button>
-
-            {/* Flèche gauche */}
-            <button
-              onClick={() => setLbIndex((i) => (i - 1 + galleryPlayable.length) % galleryPlayable.length)}
-              className="absolute left-2 top-1/2 -translate-y-1/2 z-10 h-12 w-12 rounded-full bg-black/60 hover:bg-black/80 grid place-items-center text-2xl"
-              aria-label="Précédent"
-            >
-              ←
-            </button>
-
-            {/* Flèche droite */}
-            <button
-              onClick={() => setLbIndex((i) => (i + 1) % galleryPlayable.length)}
-              className="absolute right-2 top-1/2 -translate-y-1/2 z-10 h-12 w-12 rounded-full bg-black/60 hover:bg-black/80 grid place-items-center text-2xl"
-              aria-label="Suivant"
-            >
-              →
-            </button>
-
-            {/* Media */}
             <div className="bg-black/40 rounded-lg overflow-hidden border border-white/20">
               {(() => {
-                const cur = galleryPlayable[lbIndex];
+                const cur = playable[lbIndex];
                 if (cur.kind === "image") {
-                  return (
-                    <img
-                      src={cur.url}
-                      alt={cur.title}
-                      className="max-h-[80vh] w-full object-contain"
-                    />
-                  );
+                  return <img src={cur.url} alt={cur.title} className="max-h-[80vh] w-full object-contain" />;
                 }
-                return (
-                  <video
-                    src={cur.url}
-                    className="max-h-[80vh] w-full object-contain"
-                    controls
-                    autoPlay
-                    playsInline
-                  />
-                );
+                return <video src={cur.url} className="max-h-[80vh] w-full object-contain" controls autoPlay playsInline />;
               })()}
             </div>
-
             <div className="mt-3 text-center text-sm text-white/80 truncate">
-              {galleryPlayable[lbIndex].title} •{" "}
-              {new Date(galleryPlayable[lbIndex].createdAt).toLocaleDateString("fr-FR")}
+              {playable[lbIndex].title} • {new Date(playable[lbIndex].createdAt).toLocaleDateString("fr-FR")}
             </div>
           </div>
         </div>
