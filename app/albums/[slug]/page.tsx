@@ -16,7 +16,7 @@ type Item = {
   folder?: string;
 };
  
-// Typage corrigé pour éviter le problème "params en Promise"
+// ✅ Typage corrigé
 interface PageProps {
   params: {
     slug: string;
@@ -99,7 +99,7 @@ export default function AlbumMembrePage({ params }: PageProps) {
         <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
           {filtered.map((m) => (
             <div
-key={m.id}
+              key={m.id}
               className="relative overflow-hidden rounded-lg border border-white/20 group"
             >
               <div className="aspect-video">
@@ -140,3 +140,4 @@ key={m.id}
     </main>
   );
 }
+ 
