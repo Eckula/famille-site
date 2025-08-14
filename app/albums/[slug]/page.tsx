@@ -2,12 +2,10 @@
 import { notFound } from "next/navigation";
 import Image from "next/image";
 
-type PageProps = {
-  params: { slug: string };
-};
-
-export default async function AlbumPage({ params }: PageProps) {
-  const { slug } = params;
+export default async function AlbumPage(
+  { params }: { params: Promise<{ slug: string }> }
+) {
+  const { slug } = await params;
 
   const res = await fetch(
     `${process.env.NEXT_PUBLIC_BASE_URL}/api/media/list?folder=albums/${slug}`,
