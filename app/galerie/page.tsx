@@ -1,8 +1,8 @@
 // app/galerie/page.tsx
-// version compacte : grille 2/3 colonnes, lightbox, supprimer/déplacer
 "use client";
 
 import Link from "next/link";
+import Image from "next/image"; // ✅ remplacement <img>
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Kind = "image" | "video" | "document";
@@ -35,6 +35,11 @@ const docEmoji = (ext?: string) => {
   if (["zip","rar","7z","tar","gz"].includes(e)) return "🗜️";
   return "📎";
 };
+
+// ✅ Fonction pour détecter si c’est un lien YouTube
+function isYouTube(url: string) {
+  return /youtu\.be|youtube\.com/.test(url);
+}
 
 export default function GaleriePage() {
   const [raw, setRaw] = useState<Item[]>([]);
@@ -141,7 +146,7 @@ export default function GaleriePage() {
       <h1 className="text-3xl font-bold mb-2">Galerie</h1>
       <p className="mb-6 text-white/80">Photos, vidéos et documents du dossier Cloudinary <code>famille</code>.</p>
 
-      {/* Outils */}
+      {/* Filtres */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
         <div className="inline-flex rounded-full border border-white/20 bg-black/30 p-1 gap-2">
           {(["all","images","videos","documents"] as const).map(k => (
@@ -156,6 +161,7 @@ export default function GaleriePage() {
           ))}
         </div>
 
+        {/* Recherche + tri */}
         <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
           <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher par titre…"
                  className="w-full sm:w-72 rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none focus:ring-2 focus:ring-yellow-300/60"/>
@@ -176,34 +182,12 @@ export default function GaleriePage() {
         </div>
       </div>
 
-      {/* Actions de sélection */}
-      {selectedIds.size>0 && (
-        <div className="mb-4 flex flex-col md:flex-row items-start md:items-center gap-3 rounded-lg border border-white/20 bg-black/30 p-3">
-          <div className="text-sm">{selectedIds.size} élément(s) sélectionné(s)</div>
-          <div className="flex gap-2">
-            <button onClick={doDelete} className="px-3 py-2 rounded-lg bg-red-500/90 hover:bg-red-500 text-black">Supprimer</button>
-            <div className="flex items-center gap-2">
-              <input value={moveFolder} onChange={e=>setMoveFolder(e.target.value)}
-                     placeholder="famille/Photos/Anniversaires"
-                     className="rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none"/>
-              <button onClick={doMove} className="px-3 py-2 rounded-lg bg-yellow-500 hover:bg-yellow-400 text-black">
-                Déplacer ➜
-              </button>
-            </div>
-            <button onClick={clearSel} className="px-3 py-2 rounded-lg border border-white/30 hover:bg-white/10">Annuler</button>
-          </div>
-        </div>
-      )}
-
-      {/* Grille 2/3 colonnes */}
+      {/* Grille réduite sur PC */}
       {loading ? (
         <p className="text-white/70">Chargement…</p>
       ) : items.length === 0 ? (
         <div className="text-white/80">
           <p>Aucun élément.</p>
-          <Link href="/admin/upload" className="inline-block mt-3 rounded-lg border border-white/20 bg-white/10 px-4 py-2 hover:bg-white/20">
-            ➕ Ajouter des médias
-          </Link>
         </div>
       ) : (
         <div className="grid gap-4 grid-cols-2 lg:grid-cols-3">
@@ -219,17 +203,26 @@ export default function GaleriePage() {
 
                 <div className="aspect-video">
                   {isImg ? (
-                    <img
-                      src={m.thumb ?? m.url} alt={m.title}
+                    <Image
+                      src={m.thumb ?? m.url}
+                      alt={m.title}
+                      width={800}
+                      height={600}
                       className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                      loading="lazy" onClick={()=>openLightboxFor(m.id)}
+                      onClick={()=>openLightboxFor(m.id)}
                     />
                   ) : isVid ? (
-                    <div className="relative w-full h-full bg-black/40">
+                    isYouTube(m.url) ? (
+                      <iframe
+                        src={m.url.replace("watch?v=", "embed/")}
+                        className="w-full h-full"
+                        allow="autoplay; encrypted-media"
+                        allowFullScreen
+                      />
+                    ) : (
                       <video src={m.url} className="w-full h-full object-cover" preload="metadata" muted playsInline
                              onClick={()=>openLightboxFor(m.id)} />
-                      <div className="absolute inset-0 grid place-items-center text-3xl opacity-80 pointer-events-none">▶</div>
-                    </div>
+                    )
                   ) : (
                     <a href={m.url} target="_blank" rel="noopener noreferrer"
                        className="w-full h-full grid place-items-center bg-white/5 text-white/90" title="Ouvrir / Télécharger">
@@ -262,13 +255,13 @@ export default function GaleriePage() {
               {(() => {
                 const cur = playable[lbIndex];
                 if (cur.kind === "image") {
-                  return <img src={cur.url} alt={cur.title} className="max-h-[80vh] w-full object-contain" />;
+                  return <Image src={cur.url} alt={cur.title} width={1200} height={800} className="max-h-[80vh] w-full object-contain" />;
+                }
+                if (isYouTube(cur.url)) {
+                  return <iframe src={cur.url.replace("watch?v=", "embed/")} className="w-full h-[80vh]" allow="autoplay; encrypted-media" allowFullScreen />;
                 }
                 return <video src={cur.url} className="max-h-[80vh] w-full object-contain" controls autoPlay playsInline />;
               })()}
-            </div>
-            <div className="mt-3 text-center text-sm text-white/80 truncate">
-              {playable[lbIndex].title} • {new Date(playable[lbIndex].createdAt).toLocaleDateString("fr-FR")}
             </div>
           </div>
         </div>
