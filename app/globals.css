@@ -9,7 +9,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: transparent; /* Même en sombre */
+    --background: transparent;
     --foreground: #ededed;
   }
 }
@@ -48,7 +48,6 @@ a {
 
 /* ===== Utilitaires personnalisés ===== */
 @layer utilities {
-  /* Style des cartes réutilisables */
   .card {
     @apply rounded-2xl border bg-white shadow-sm hover:shadow-md transition border-slate-200;
   }
@@ -57,13 +56,13 @@ a {
   }
 }
 
-/* ===== Accessibilité ===== */
-/* Cacher la vidéo si l’utilisateur demande de réduire les animations */
+/* Cacher la vidéo si animations réduites */
 @media (prefers-reduced-motion: reduce) {
   .bg-video {
     display: none;
   }
 }
+
 body {
   background: transparent !important;
 }

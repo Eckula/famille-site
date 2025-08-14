@@ -3,11 +3,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 export default function Nav() {
   const [open, setOpen] = useState(false);
   const btnRef = useRef(null);
   const panelRef = useRef(null);
+  const pathname = usePathname();
 
   useEffect(() => {
     const onKey = (e) => e.key === "Escape" && setOpen(false);
@@ -22,14 +24,20 @@ export default function Nav() {
         panelRef.current &&
         !panelRef.current.contains(e.target) &&
         !btnRef.current.contains(e.target)
-      ) setOpen(false);
+      ) {
+        setOpen(false);
+      }
     };
     window.addEventListener("click", onClick);
     return () => window.removeEventListener("click", onClick);
   }, [open]);
 
-  const Item = ({ href, children }) => (
-    <Link href={href} prefetch={false} className="hover:text-yellow-300 transition whitespace-nowrap">
+  const LinkItem = ({ href, children }) => (
+    <Link
+      href={href}
+      className="hover:text-yellow-300 transition"
+      prefetch={false}
+    >
       {children}
     </Link>
   );
@@ -37,37 +45,41 @@ export default function Nav() {
   return (
     <nav className="fixed top-0 left-0 right-0 z-40">
       <div className="mx-auto max-w-6xl px-4">
-        <div className="mt-4 grid grid-cols-3 items-center rounded-full border border-white/30 bg-black/35 px-4 py-2 text-white backdrop-blur">
-          {/* Liens desktop */}
-          <div className="hidden md:flex items-center gap-5 text-sm">
-            <Item href="/galerie?tab=all">Galerie</Item>
-            <Item href="/galerie?tab=images">Photos</Item>
-            <Item href="/galerie?tab=videos">Vidéos</Item>
-            <Item href="/galerie?tab=documents">Documents</Item>
-            <Item href="/albums">Albums</Item>
-            <Item href="/evenements">Événements</Item>
-            <Item href="/jeux/snake">Jeux</Item>
+        <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center rounded-full border border-white/30 bg-black/35 px-4 py-2 text-white backdrop-blur">
+          
+          {/* Colonne gauche */}
+          <div className="hidden md:flex items-center gap-6 text-sm">
+            <LinkItem href="/galerie?tab=all">Galerie</LinkItem>
+            <LinkItem href="/galerie?tab=images">Photos</LinkItem>
+            <LinkItem href="/galerie?tab=videos">Vidéos</LinkItem>
+            <LinkItem href="/galerie?tab=documents">Documents</LinkItem>
+            <LinkItem href="/albums">Albums</LinkItem>
+            <LinkItem href="/evenements">Événements</LinkItem>
+            <LinkItem href="/jeux/snake">Jeux</LinkItem>
           </div>
 
-          {/* Titre centré — on masque “– Accueil” sur mobile */}
-          <div className="text-center text-base sm:text-lg font-bold truncate">
-            <Link href="/" className="hover:text-yellow-300 transition whitespace-nowrap">
-              Famille Merenge<span className="hidden sm:inline"> – Accueil</span>
+          {/* Colonne centre : espacement réglé */}
+          <div className="text-center text-base sm:text-lg font-bold truncate md:translate-x-8">
+            <Link href="/" className="hover:text-yellow-300 transition">
+              Famille Merenge – Accueil
             </Link>
           </div>
 
-          {/* Admin + burger mobile */}
+          {/* Colonne droite */}
           <div className="flex items-center justify-end gap-3">
-            <Link href="/admin" className="hidden md:inline-block rounded-full border border-white/30 px-3 py-1.5 hover:bg-white/10">
+            <Link
+              href="/admin"
+              className="hidden md:inline-block rounded-full border border-white/30 px-3 py-1.5 hover:bg-white/10"
+            >
               Admin
             </Link>
             <button
               ref={btnRef}
               type="button"
+              className="md:hidden inline-flex items-center justify-center rounded-full border border-white/30 px-3 py-2 hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-yellow-300/60"
               aria-label="Ouvrir le menu"
               aria-expanded={open}
-              onClick={() => setOpen(v => !v)}
-              className="md:hidden inline-flex items-center justify-center rounded-full border border-white/30 px-3 py-2 hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-yellow-300/60"
+              onClick={() => setOpen((v) => !v)}
             >
               {open ? "✕" : "☰"}
             </button>
@@ -75,24 +87,23 @@ export default function Nav() {
         </div>
       </div>
 
-      {/* Menu mobile */}
       {open && (
         <div className="md:hidden">
           <div className="fixed inset-0 z-30 bg-black/50" aria-hidden="true" />
           <div
             ref={panelRef}
             className="fixed right-3 left-3 top-20 z-40 rounded-2xl border border-white/30 bg-black/85 p-4 text-white backdrop-blur"
-            role="menu" aria-label="Menu"
+            role="menu"
           >
             <div className="grid gap-2">
-              <Link href="/galerie?tab=all" className="rounded-lg px-3 py-2 hover:bg-white/10" onClick={() => setOpen(false)}>Galerie</Link>
-              <Link href="/galerie?tab=images" className="rounded-lg px-3 py-2 hover:bg-white/10" onClick={() => setOpen(false)}>Photos</Link>
-              <Link href="/galerie?tab=videos" className="rounded-lg px-3 py-2 hover:bg-white/10" onClick={() => setOpen(false)}>Vidéos</Link>
-              <Link href="/galerie?tab=documents" className="rounded-lg px-3 py-2 hover:bg-white/10" onClick={() => setOpen(false)}>Documents</Link>
-              <Link href="/albums" className="rounded-lg px-3 py-2 hover:bg-white/10" onClick={() => setOpen(false)}>Albums</Link>
-              <Link href="/evenements" className="rounded-lg px-3 py-2 hover:bg-white/10" onClick={() => setOpen(false)}>Événements</Link>
-              <Link href="/jeux/snake" className="rounded-lg px-3 py-2 hover:bg-white/10" onClick={() => setOpen(false)}>Jeux</Link>
-              <Link href="/admin" className="rounded-lg px-3 py-2 hover:bg-white/10" onClick={() => setOpen(false)}>Admin</Link>
+              <Link href="/galerie?tab=all" onClick={() => setOpen(false)}>Galerie</Link>
+              <Link href="/galerie?tab=images" onClick={() => setOpen(false)}>Photos</Link>
+              <Link href="/galerie?tab=videos" onClick={() => setOpen(false)}>Vidéos</Link>
+              <Link href="/galerie?tab=documents" onClick={() => setOpen(false)}>Documents</Link>
+              <Link href="/albums" onClick={() => setOpen(false)}>Albums</Link>
+              <Link href="/evenements" onClick={() => setOpen(false)}>Événements</Link>
+              <Link href="/jeux/snake" onClick={() => setOpen(false)}>Jeux</Link>
+              <Link href="/admin" onClick={() => setOpen(false)}>Admin</Link>
             </div>
           </div>
         </div>

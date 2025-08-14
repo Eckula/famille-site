@@ -1,16 +1,17 @@
 import Link from "next/link";
+import Image from "next/image";
 
 const cards = [
   { 
     title: "Photos",   
     desc: "Une sélection d’images souvenirs.", 
-    href: "/photos",   
+    href: "/galerie?tab=images",   
     img: "/images/photos.jpg"   
   },
   { 
     title: "Vidéos",   
     desc: "Regardez nos clips et vlogs.", 
-    href: "/videos",   
+    href: "/galerie?tab=videos",   
     img: "/images/videos.jpg"   
   },
   { 
@@ -26,9 +27,9 @@ const cards = [
     img: "/images/albums.jpg"   
   },
   { 
-    title: "Documents",
+    title: "Documents", /* correction → filtre direct */
     desc: "PDF et fichiers partagés.", 
-    href: "/docs",     
+    href: "/galerie?tab=documents",     
     img: "/images/docs.jpg"     
   },
   { 
@@ -44,7 +45,9 @@ export default function HomePage() {
     <main className="relative min-h-screen text-white">
       {/* Bandeau d'intro */}
       <section className="flex flex-col items-center justify-center text-center pt-24 pb-8 px-6">
-        <h1 className="text-5xl font-extrabold drop-shadow-lg">Famille Merenge</h1>
+        <h1 className="text-5xl font-extrabold drop-shadow-lg">
+          Famille Merenge – Accueil
+        </h1>
         <p className="mt-4 text-lg max-w-2xl drop-shadow">
           Bienvenue sur notre espace familial — retrouvez photos, vidéos, souvenirs et événements importants.
         </p>
@@ -58,11 +61,13 @@ export default function HomePage() {
             href={c.href}
             className="group relative overflow-hidden rounded-2xl border border-white/25 bg-white/5 shadow-sm hover:shadow-lg transition"
           >
-            {/* Image */}
+            {/* Image optimisée */}
             <div className="aspect-video w-full overflow-hidden">
-              <img
+              <Image
                 src={c.img}
                 alt={c.title}
+                width={800}
+                height={450}
                 className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
               />
             </div>
