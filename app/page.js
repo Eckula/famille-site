@@ -11,7 +11,7 @@ const cards = [
   { 
     title: "Vidéos",   
     desc: "Regardez nos clips et vlogs.", 
-    href: "/galerie?tab=videos",   
+    href: "/videos",   
     img: "/images/videos.jpg"   
   },
   { 
