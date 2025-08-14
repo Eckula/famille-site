@@ -3,17 +3,18 @@ import { notFound } from "next/navigation";
 import Image from "next/image";
 
 type PageProps = {
-  params: { slug: string };
+  params: Promise<{ slug: string }>;
 };
 
 export default async function AlbumPage({ params }: PageProps) {
-  const { slug } = params;
+  const { slug } = await params;
 
-  // Exemple : récupération des images depuis ton API
+  // On récupère la liste des médias de cet album
   const res = await fetch(
     `${process.env.NEXT_PUBLIC_BASE_URL}/api/media/list?folder=albums/${slug}`,
     { cache: "no-store" }
   );
+
   if (!res.ok) return notFound();
 
   const data = await res.json();
@@ -22,6 +23,7 @@ export default async function AlbumPage({ params }: PageProps) {
   return (
     <main className="px-6 py-20 text-white">
       <h1 className="text-3xl font-bold mb-6">Album : {slug}</h1>
+
       {items.length === 0 ? (
         <p>Aucun média trouvé dans cet album.</p>
       ) : (
