@@ -6,8 +6,6 @@ import Link from "next/link";
 const YT_LINKS = [
   "https://youtu.be/E7C0ygg-DbI?si=VWoVmixRp9AnyUuV",
   "https://youtu.be/CMaBEXJk4FY?si=p-735NRRYvyTEKpa",
-  "https://youtu.be/VmDYyAL5fSg?si=-yRbixjsCf_L6Oap",
-  "https://youtu.be/BhC5ip9ysBI?si=dHExBrIVeTmZc4lz",
 ];
 
 function extractYouTubeId(url: string): string | null {
