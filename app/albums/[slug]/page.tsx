@@ -1,6 +1,7 @@
 "use client";
  
 import { useEffect, useMemo, useState } from "react";
+import Image from "next/image"; // ✅ pour remplacer <img>
  
 type Kind = "image" | "video" | "document";
  
@@ -16,29 +17,26 @@ type Item = {
   folder?: string;
 };
  
-// ✅ Typage corrigé
-interface PageProps {
-  params: {
-    slug: string;
-  };
-}
- 
 function docEmoji(ext?: string) {
   const e = (ext || "").toLowerCase();
   if (["pdf"].includes(e)) return "📄";
   if (["doc", "docx"].includes(e)) return "📝";
   if (["xls", "xlsx", "csv"].includes(e)) return "📊";
   if (["ppt", "pptx"].includes(e)) return "📽️";
-  if (["mp3", "wav", "aac", "m4a", "flac", "ogg", "oga"].includes(e))
-    return "🎵";
+  if (["mp3", "wav", "aac", "m4a", "flac", "ogg", "oga"].includes(e)) return "🎵";
   if (["zip", "rar", "7z", "tar", "gz"].includes(e)) return "🗜️";
   return "📎";
+}
+ 
+interface PageProps {
+  params: {
+    slug: string;
+  };
 }
  
 export default function AlbumMembrePage({ params }: PageProps) {
   const prenom = decodeURIComponent(params.slug || "");
   const folder = `famille/Albums/${prenom}`;
- 
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
@@ -99,16 +97,17 @@ export default function AlbumMembrePage({ params }: PageProps) {
         <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
           {filtered.map((m) => (
             <div
-              key={m.id}
+key={m.id}
               className="relative overflow-hidden rounded-lg border border-white/20 group"
             >
               <div className="aspect-video">
                 {m.kind === "image" ? (
-                  <img
+                  <Image
                     src={m.thumb ?? m.url}
                     alt={m.title}
+                    width={500}
+                    height={300}
                     className="w-full h-full object-cover"
-                    loading="lazy"
                   />
                 ) : m.kind === "video" ? (
                   <video
@@ -140,4 +139,3 @@ export default function AlbumMembrePage({ params }: PageProps) {
     </main>
   );
 }
- 
