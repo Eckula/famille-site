@@ -1,5 +1,3 @@
-# 1) Réécrire le fichier avec la correction Next.js 15 (params en Promise)
-cat > app/albums/[slug]/page.tsx <<'EOF'
 import { notFound } from "next/navigation";
 import Image from "next/image";
 
@@ -45,19 +43,3 @@ export default async function AlbumPage(
     </main>
   );
 }
-EOF
-
-# 2) Tester le build en local
-echo "=== Test du build local ==="
-rm -rf .next
-npm run build
-
-# 3) Commit et push si le build est OK
-if [ $? -eq 0 ]; then
-  git add app/albums/[slug]/page.tsx
-  git commit -m "Fix params type to Promise in AlbumPage for Next.js 15"
-  git push
-  echo "✅ Build local OK et changements poussés sur la branche."
-else
-  echo "❌ Le build local a échoué. Corrigez avant de pousser."
-fi
