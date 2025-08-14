@@ -1,4 +1,4 @@
-// app/albums/[slug]/page.tsx
+cat > app/albums/[slug]/page.tsx <<'EOF'
 import { notFound } from "next/navigation";
 import Image from "next/image";
 
@@ -44,3 +44,4 @@ export default async function AlbumPage(
     </main>
   );
 }
+EOF
