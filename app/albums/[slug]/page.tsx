@@ -44,3 +44,8 @@ export default async function AlbumPage(
     </main>
   );
 }
+EOF
+
+git add app/albums/[slug]/page.tsx
+git commit -m "Fix params type to Promise in AlbumPage for Next.js 15"
+git push
