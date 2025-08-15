@@ -11,13 +11,31 @@ type Item = {
   public_id: string;     // identifiant Cloudinary complet (incluant le dossier)
   kind: Kind;
   title: string;
-  url: string;
+  url: string;           // URL Cloudinary (peut être /image/upload/ même pour des docs -> on normalise)
   thumb?: string;
   createdAt: string;
-  format?: string;
-  folder?: string;       // si présent, c'est le dossier courant
+  format?: string;       // "pdf", "docx", etc.
+  folder?: string;
 };
 type Tab = "all" | "images" | "videos" | "documents";
+
+/* ---------- Helpers URL ---------- */
+
+// Normalise une URL Cloudinary en /raw/upload pour les documents/audio/etc.
+function toRawUrl(u: string) {
+  return u
+    .replace("/image/upload/", "/raw/upload/")
+    .replace("/video/upload/", "/raw/upload/");
+}
+
+// Ajoute fl_attachment pour forcer le téléchargement.
+// Pour les docs, on passe aussi par /raw/upload.
+function toDownloadUrl(item: Item) {
+  const base = item.kind === "document" ? toRawUrl(item.url) : item.url;
+  return base.includes("?") ? `${base}&fl_attachment` : `${base}?fl_attachment`;
+}
+
+const isYouTube = (url: string) => /youtu\.be|youtube\.com/.test(url);
 
 function getTabFromUrl(): Tab {
   if (typeof window === "undefined") return "all";
@@ -25,6 +43,7 @@ function getTabFromUrl(): Tab {
   const t = (sp.get("tab") || "all").toLowerCase();
   return (["all","images","videos","documents"].includes(t) ? (t as Tab) : "all");
 }
+
 const docEmoji = (ext?: string) => {
   const e = (ext || "").toLowerCase();
   if (["pdf"].includes(e)) return "📄";
@@ -35,11 +54,13 @@ const docEmoji = (ext?: string) => {
   if (["zip","rar","7z","tar","gz"].includes(e)) return "🗜️";
   return "📎";
 };
-const isYouTube = (url: string) => /youtu\.be|youtube\.com/.test(url);
+
 const folderOf = (it: Item) =>
   (it.folder && it.folder.length > 0)
     ? it.folder.replace(/\/+$/,"")
     : it.public_id.split("/").slice(0, -1).join("/").replace(/\/+$/,"");
+
+/* ---------- Composant ---------- */
 
 export default function GaleriePage() {
   const [raw, setRaw] = useState<Item[]>([]);
@@ -49,19 +70,19 @@ export default function GaleriePage() {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<"newest"|"oldest">("newest");
 
-  // --- Sélection (utilise public_id pour l'API)
+  // Sélection (utilise public_id pour l'API)
   const [selectedPublicIds, setSelectedPublicIds] = useState<Set<string>>(new Set());
   const toggleSel = (publicId: string) =>
     setSelectedPublicIds(s => (s.has(publicId) ? new Set([...s].filter(x=>x!==publicId)) : new Set(s).add(publicId)));
   const clearSel = () => setSelectedPublicIds(new Set());
   const [moveFolder, setMoveFolder] = useState("famille/Photos");
 
-  // --- Lightbox
+  // Lightbox
   const [lbOpen, setLbOpen] = useState(false);
   const [lbIndex, setLbIndex] = useState(0);
   const swipeStartX = useRef<number|null>(null);
 
-  // Chargement
+  // Chargement liste
   const fetchList = useCallback(async () => {
     setLoading(true);
     try {
@@ -70,10 +91,7 @@ export default function GaleriePage() {
       setRaw(j.items ?? []);
     } finally { setLoading(false); }
   }, []);
-  useEffect(() => {
-    setTab(getTabFromUrl());
-    fetchList();
-  }, [fetchList]);
+  useEffect(() => { setTab(getTabFromUrl()); fetchList(); }, [fetchList]);
 
   // Filtres + tri
   const items = useMemo(() => {
@@ -93,11 +111,13 @@ export default function GaleriePage() {
 
   const playable = useMemo(()=> items.filter(x=>x.kind!=="document"), [items]);
 
-  // Lightbox
+  // Ouvrir lightbox
   const openLightboxFor = (id: string) => {
     const idx = playable.findIndex(x=>x.id===id);
     if (idx>=0) { setLbIndex(idx); setLbOpen(true); }
   };
+
+  // Nav lightbox
   useEffect(() => {
     if (!lbOpen) return;
     const onKey = (e: KeyboardEvent) => {
@@ -117,7 +137,8 @@ export default function GaleriePage() {
     else setLbIndex(i=>(i+1)%playable.length);
   };
 
-  // Actions
+  /* ---------- Actions API ---------- */
+
   async function doDelete() {
     if (selectedPublicIds.size===0) return;
     if (!confirm(`Supprimer ${selectedPublicIds.size} élément(s) ?`)) return;
@@ -136,7 +157,6 @@ export default function GaleriePage() {
     const target = moveFolder.trim().replace(/\/+$/,"");
     if (!target) { alert("Renseigne un dossier cible"); return; }
 
-    // Sépare ce qui est déjà au bon endroit vs. ce qui doit bouger
     const selectedItems = items.filter(i => selectedPublicIds.has(i.public_id));
     const already = selectedItems.filter(i => folderOf(i) === target);
     const toMovePublicIds = selectedItems.filter(i => folderOf(i) !== target).map(i => i.public_id);
@@ -161,7 +181,40 @@ export default function GaleriePage() {
     clearSel(); fetchList();
   }
 
-  // --- TOUT SÉLECTIONNER (vue courante)
+  /* ---------- Téléchargements ---------- */
+
+  // Téléchargement d'une liste d'items (ouvre des onglets masqués pour chaque média)
+  function downloadMany(list: Item[]) {
+    // ⚠️ les bloqueurs de popup peuvent empêcher l’ouverture de trop d’onglets.
+    // On cadence légèrement.
+    list.forEach((it, idx) => {
+      const u = toDownloadUrl(it);
+      setTimeout(() => {
+        const a = document.createElement("a");
+        a.href = u;
+        a.download = it.title || it.public_id; // hint
+        a.target = "_blank";
+        a.rel = "noopener";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }, idx * 150);
+    });
+  }
+
+  function downloadSelected() {
+    if (selectedPublicIds.size === 0) return;
+    const list = items.filter(i => selectedPublicIds.has(i.public_id));
+    downloadMany(list);
+  }
+
+  function downloadVisible() {
+    if (items.length === 0) return;
+    downloadMany(items);
+  }
+
+  /* ---------- Sélections globales ---------- */
+
   const allVisibleSelected = useMemo(
     () => items.length > 0 && items.every(i => selectedPublicIds.has(i.public_id)),
     [items, selectedPublicIds]
@@ -175,27 +228,29 @@ export default function GaleriePage() {
     });
   };
 
+  /* ---------- Rendu ---------- */
+
   return (
     <main className="px-6 py-24 text-white">
       <h1 className="text-3xl font-bold mb-2">Galerie</h1>
       <p className="mb-6 text-white/80">Photos, vidéos et documents du dossier Cloudinary <code>famille</code>.</p>
 
-      {/* Filtres (haut) */}
+      {/* Filtres haut */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="inline-flex rounded-full border border-white/20 bg-black/30 p-1 gap-2">
-          {(["all","images","videos","documents"] as const).map(k => (
-            <Link
-              key={k} prefetch={false}
-              href={`/galerie?tab=${k}`}
-              onClick={()=>setTab(k)}
-              className={`px-4 py-2 rounded-full ${tab===k ? "bg-white/20" : "hover:bg-white/10"}`}
-            >
-              {k==="all" ? "Tout" : k==="images" ? "Photos" : k==="videos" ? "Vidéos" : "Documents"}
-            </Link>
-          ))}
+            {(["all","images","videos","documents"] as const).map(k => (
+              <Link
+                key={k} prefetch={false}
+                href={`/galerie?tab=${k}`}
+                onClick={()=>setTab(k)}
+                className={`px-4 py-2 rounded-full ${tab===k ? "bg-white/20" : "hover:bg-white/10"}`}
+              >
+                {k==="all" ? "Tout" : k==="images" ? "Photos" : k==="videos" ? "Vidéos" : "Documents"}
+              </Link>
+            ))}
         </div>
 
-        {/* Recherche + tri + sélection globale (vue) + bouton upload */}
+        {/* Recherche + tri + actions globales */}
         <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
           <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher par titre…"
                  className="w-full sm:w-72 rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none focus:ring-2 focus:ring-yellow-300/60"/>
@@ -215,6 +270,14 @@ export default function GaleriePage() {
           >
             {allVisibleSelected ? "Tout désélectionner (vue)" : "Tout sélectionner (vue)"}
           </button>
+          {/* NEW: Télécharger tous les médias visibles */}
+          <button
+            onClick={downloadVisible}
+            className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 hover:bg-white/20"
+            title="Télécharger tous les éléments visibles"
+          >
+            Télécharger (vue)
+          </button>
           <Link
             href={`/admin/upload?rubric=${tab==="images"?"Photos":tab==="videos"?"Vidéos":tab==="documents"?"Documents":"Photos"}`}
             className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-center hover:bg-white/20">
@@ -223,7 +286,7 @@ export default function GaleriePage() {
         </div>
       </div>
 
-      {/* BARRE D'ACTIONS — placée entre les filtres et la grille */}
+      {/* Barre d'actions entre filtres et grille */}
       {selectedPublicIds.size > 0 && (
         <div className="mt-3 mb-4 rounded-xl bg-black/80 border border-white/20 p-3 shadow-lg">
           <div className="flex flex-col sm:flex-row sm:items-center gap-3">
@@ -231,6 +294,10 @@ export default function GaleriePage() {
               {selectedPublicIds.size} élément{selectedPublicIds.size > 1 ? "s" : ""} sélectionné{selectedPublicIds.size > 1 ? "s" : ""}
             </div>
             <div className="flex gap-2 flex-wrap">
+              {/* NEW: Télécharger sélection */}
+              <button onClick={downloadSelected} className="px-3 py-2 rounded bg-blue-500 text-black hover:bg-blue-400">
+                Télécharger sélection
+              </button>
               <button onClick={doDelete} className="px-3 py-2 rounded bg-red-500 text-black hover:bg-red-400">
                 Supprimer
               </button>
@@ -258,6 +325,7 @@ export default function GaleriePage() {
           {items.map(m => {
             const isImg = m.kind==="image";
             const isVid = m.kind==="video";
+            const isDoc = m.kind==="document";
             return (
               <div key={m.id} className="relative overflow-hidden rounded-lg border border-white/20 group">
                 <label className="absolute top-2 left-2 z-10 inline-flex items-center gap-2 bg-black/50 rounded px-2 py-1 text-xs">
@@ -270,9 +338,13 @@ export default function GaleriePage() {
                 </label>
                 <div className="aspect-video">
                   {isImg ? (
-                    <Image src={m.thumb ?? m.url} alt={m.title} width={800} height={600}
-                           className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                           onClick={()=>openLightboxFor(m.id)} />
+                    <Image
+                      src={m.thumb ?? m.url}
+                      alt={m.title}
+                      width={800} height={600}
+                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                      onClick={()=>openLightboxFor(m.id)}
+                    />
                   ) : isVid ? (
                     isYouTube(m.url) ? (
                       <iframe src={m.url.replace("watch?v=", "embed/")} className="w-full h-full"
@@ -281,12 +353,19 @@ export default function GaleriePage() {
                       <video src={m.url} className="w-full h-full object-cover" preload="metadata" muted playsInline
                              onClick={()=>openLightboxFor(m.id)} />
                     )
-                  ) : (
-                    <a href={m.url} target="_blank" rel="noopener noreferrer"
-                       className="w-full h-full grid place-items-center bg-white/5 text-white/90" title="Ouvrir / Télécharger">
-                      <div className="text-base sm:text-lg">{docEmoji(m.format)} {m.title}{m.format?`.${m.format}`:""}</div>
+                  ) : isDoc ? (
+                    <a
+                      href={toDownloadUrl(m)} // ouvre /raw/upload/... + fl_attachment
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full h-full grid place-items-center bg-white/5 text-white/90"
+                      title="Ouvrir / Télécharger"
+                    >
+                      <div className="text-base sm:text-lg">
+                        {docEmoji(m.format)} {m.title}{m.format?`.${m.format}`:""}
+                      </div>
                     </a>
-                  )}
+                  ) : null}
                 </div>
               </div>
             );
@@ -294,13 +373,22 @@ export default function GaleriePage() {
         </div>
       )}
 
-      {/* Lightbox */}
+      {/* Lightbox : support images/vidéos ET documents via <iframe src=/raw/upload/...> */}
       {lbOpen && playable.length>0 && (
         <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-50 p-4"
              onClick={()=>setLbOpen(false)} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
           <div className="relative max-w-6xl w-full max-h-[90vh]" onClick={(e)=>e.stopPropagation()}>
-            <div className="absolute top-2 right-2 z-10 rounded-full bg-black/60 px-3 py-1 text-sm">
-              {lbIndex+1} / {playable.length}
+            <div className="absolute top-2 right-2 z-10 flex gap-2">
+              <div className="rounded-full bg-black/60 px-3 py-1 text-sm">{lbIndex+1} / {playable.length}</div>
+              {/* Bouton Télécharger l’élément ouvert */}
+              <a
+                href={toDownloadUrl(playable[lbIndex])}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded bg-white/80 text-black px-3 py-1 text-sm hover:bg-white"
+              >
+                Télécharger
+              </a>
             </div>
             <button onClick={()=>setLbOpen(false)}
                     className="absolute top-2 left-2 z-10 rounded-full border border-white/30 px-3 py-1 bg-black/40">✕</button>
@@ -308,6 +396,7 @@ export default function GaleriePage() {
                     className="absolute left-2 top-1/2 -translate-y-1/2 z-10 h-12 w-12 rounded-full bg-black/60 hover:bg-black/80 grid place-items-center text-2xl">←</button>
             <button onClick={()=>setLbIndex(i=>(i+1)%playable.length)}
                     className="absolute right-2 top-1/2 -translate-y-1/2 z-10 h-12 w-12 rounded-full bg-black/60 hover:bg-black/80 grid place-items-center text-2xl">→</button>
+
             <div className="bg-black/40 rounded-lg overflow-hidden border border-white/20">
               {(() => {
                 const cur = playable[lbIndex];
@@ -317,7 +406,12 @@ export default function GaleriePage() {
                 if (isYouTube(cur.url)) {
                   return <iframe src={cur.url.replace("watch?v=", "embed/")} className="w-full h-[80vh]" allow="autoplay; encrypted-media" allowFullScreen />;
                 }
-                return <video src={cur.url} className="max-h-[80vh] w-full object-contain" controls autoPlay playsInline />;
+                // vidéo “fichier”
+                if (cur.kind === "video") {
+                  return <video src={cur.url} className="max-h-[80vh] w-full object-contain" controls autoPlay playsInline />;
+                }
+                // (Par sécurité : si jamais un doc se faufile, on l'affiche en iframe raw)
+                return <iframe src={toRawUrl(cur.url)} className="w-full h-[80vh]" />;
               })()}
             </div>
           </div>
