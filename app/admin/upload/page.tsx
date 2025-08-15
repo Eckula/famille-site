@@ -1,6 +1,8 @@
 // app/admin/upload/page.tsx
 "use client";
 
+/* eslint-disable @next/next/no-img-element */
+
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -8,7 +10,7 @@ const CLOUD  = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME!;
 const PRESET = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET!;
 
 type Status = "idle" | "uploading" | "done" | "error";
-const MAX_SIZE = 50 * 1024 * 1024; // 50 Mo (inchangé)
+const MAX_SIZE = 50 * 1024 * 1024;
 
 const RUBRICS = [
   { key: "Photos", label: "Photos" },
@@ -48,11 +50,13 @@ export default function UploadPage() {
     const arr = Array.from(list).filter(validate);
     setMsg("");
     setFiles(arr);
-    setPreviews(arr.map((f) =>
-      f.type.startsWith("image/") || f.type.startsWith("video/")
-        ? URL.createObjectURL(f)
-        : ""
-    ));
+    setPreviews(
+      arr.map((f) =>
+        f.type.startsWith("image/") || f.type.startsWith("video/")
+          ? URL.createObjectURL(f)
+          : ""
+      )
+    );
     setProgress(new Array(arr.length).fill(0));
   }
 
@@ -97,7 +101,7 @@ export default function UploadPage() {
           form.append("upload_preset", PRESET);
           form.append("folder", folder);
 
-          // 🔴 MODIF : PDF => endpoint raw/upload, sinon auto/upload
+          // ✅ PDF => RAW, sinon AUTO
           const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
           const endpoint = isPdf
             ? `https://api.cloudinary.com/v1_1/${CLOUD}/raw/upload`

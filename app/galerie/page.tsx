@@ -5,10 +5,10 @@ import Link from "next/link";
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-// ---------- PDF.js (viewer local, robuste) ----------
-import { GlobalWorkerOptions, getDocument, PDFDocumentProxy } from "pdfjs-dist/build/pdf";
+// ---------- PDF.js v5 ----------
+import { GlobalWorkerOptions, getDocument, PDFDocumentProxy } from "pdfjs-dist";
 GlobalWorkerOptions.workerSrc =
-  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.js";
+  "https://cdn.jsdelivr.net/npm/pdfjs-dist@5.4.54/build/pdf.worker.min.js";
 
 // ---------- Types ----------
 type Kind = "image" | "video" | "document";
@@ -17,7 +17,7 @@ type Item = {
   public_id: string;
   kind: Kind;
   title: string;
-  url: string;           // URL Cloudinary telle quelle (/image|/video|/raw)
+  url: string;
   thumb?: string;
   createdAt: string;
   format?: string;
@@ -32,16 +32,12 @@ function extFromItem(it: Item) {
     const p = new URL(it.url).pathname.toLowerCase();
     const m = p.match(/\.([a-z0-9]+)(?:\?|$)/i);
     return m ? m[1] : "";
-  } catch {
-    return "";
-  }
+  } catch { return ""; }
 }
-
 const OFFICE_EXTS = new Set(["doc", "docx", "xls", "xlsx", "ppt", "pptx"]);
 const AUDIO_EXTS  = new Set(["mp3", "wav", "m4a", "aac", "flac", "ogg", "oga"]);
 const TEXT_EXTS   = new Set(["txt", "csv", "json", "log", "md"]);
 
-// insère une transformation Cloudinary juste après "upload/"
 function withTransformation(url: string, tr: string) {
   const i = url.indexOf("/upload/");
   if (i === -1) return url;
@@ -49,24 +45,18 @@ function withTransformation(url: string, tr: string) {
   const tail = url.slice(i + "/upload/".length);
   return `${head}${tr}/${tail}`;
 }
-// URL pour forcer le téléchargement (sans changer resource_type)
 function toDownloadUrl(item: Item) {
   return withTransformation(item.url, "fl_attachment");
 }
-// téléchargement silencieux (pas de nouvel onglet)
-function triggerDownload(url: string) {
-  const iframe = document.createElement("iframe");
-  iframe.style.display = "none";
-  iframe.src = url;
-  document.body.appendChild(iframe);
-  setTimeout(() => iframe.remove(), 30_000);
-}
 function officeViewerUrl(url: string) {
-  // Microsoft Office Online viewer (marche bien pour doc/docx/xlsx/pptx publics)
   return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url)}`;
 }
-const isYouTube = (url: string) => /youtu\.be|youtube\.com/.test(url);
-
+function isYouTube(url: string) {
+  return /youtu\.be|youtube\.com/.test(url);
+}
+function isLegacyPdfNeedingRaw(it: Item) {
+  return it.kind === "document" && extFromItem(it) === "pdf" && it.url.includes("/image/upload/");
+}
 const docEmoji = (ext?: string) => {
   const e = (ext || "").toLowerCase();
   if (e === "pdf") return "📄";
@@ -77,12 +67,10 @@ const docEmoji = (ext?: string) => {
   if (["zip","rar","7z","tar","gz"].includes(e)) return "🗜️";
   return "📎";
 };
-
 const folderOf = (it: Item) =>
   (it.folder && it.folder.length > 0)
     ? it.folder.replace(/\/+$/,"")
     : it.public_id.split("/").slice(0, -1).join("/").replace(/\/+$/,"");
-
 function getTabFromUrl(): Tab {
   if (typeof window === "undefined") return "all";
   const sp = new URLSearchParams(window.location.search);
@@ -100,36 +88,40 @@ function PdfInline({ url }: { url: string }) {
   const [scale, setScale] = useState(1.15);
   const [err, setErr] = useState<string | null>(null);
 
-  // Charge le binaire du PDF et l'ouvre
   useEffect(() => {
     let cancelled = false;
     const ac = new AbortController();
 
     (async () => {
-      setErr(null);
-      setNumPages(0);
-      setPage(1);
-      pdfRef.current = null;
+      setErr(null); setNumPages(0); setPage(1); pdfRef.current = null;
 
-      try {
-        const resp = await fetch(url, { signal: ac.signal });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const buf = await resp.arrayBuffer();
+      // Essai direct puis fallback fl_attachment
+      const candidates = [url, withTransformation(url, "fl_attachment")];
 
-        const pdf = await getDocument({ data: buf }).promise;
-        if (cancelled) return;
-        pdfRef.current = pdf;
-        setNumPages(pdf.numPages);
-      } catch (e: any) {
-        console.error("pdf.js load error:", e);
-        if (!cancelled) setErr("Impossible d'afficher le PDF (pdf.js).");
+      let buf: ArrayBuffer | null = null;
+      let lastErr: any = null;
+      for (const u of candidates) {
+        try {
+          const resp = await fetch(u, { signal: ac.signal });
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          buf = await resp.arrayBuffer();
+          break;
+        } catch (e) { lastErr = e; }
       }
-    })();
+      if (!buf) throw lastErr || new Error("fetch failed");
+
+      const pdf = await getDocument({ data: buf }).promise;
+      if (cancelled) return;
+      pdfRef.current = pdf;
+      setNumPages(pdf.numPages);
+    })().catch((e) => {
+      console.error("pdf.js load error:", e);
+      if (!cancelled) setErr("Impossible d'afficher le PDF (pdf.js).");
+    });
 
     return () => { cancelled = true; ac.abort(); };
   }, [url]);
 
-  // Rendu de la page courante
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -154,7 +146,6 @@ function PdfInline({ url }: { url: string }) {
 
   return (
     <div className="w-full h-[80vh] bg-black/20 flex flex-col items-center justify-start">
-      {/* Toolbar PDF */}
       <div className="w-full flex items-center justify-center gap-3 p-2 bg-black/40 text-white text-sm">
         <button onClick={()=>setScale(s=>Math.max(0.5, s-0.1))} className="px-2 py-1 rounded border border-white/30">-</button>
         <div>Zoom {(scale*100).toFixed(0)}%</div>
@@ -185,19 +176,15 @@ export default function GaleriePage() {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<"newest"|"oldest">("newest");
 
-  // Sélection
   const [selectedPublicIds, setSelectedPublicIds] = useState<Set<string>>(new Set());
   const toggleSel = (publicId: string) =>
     setSelectedPublicIds(s => (s.has(publicId) ? new Set([...s].filter(x=>x!==publicId)) : new Set(s).add(publicId)));
   const clearSel = () => setSelectedPublicIds(new Set());
   const [moveFolder, setMoveFolder] = useState("famille/Photos");
 
-  // Lightbox
   const [lbOpen, setLbOpen] = useState(false);
   const [lbIndex, setLbIndex] = useState(0);
-  const swipeStartX = useRef<number|null>(null);
 
-  // Chargement
   const fetchList = useCallback(async () => {
     setLoading(true);
     try {
@@ -208,7 +195,6 @@ export default function GaleriePage() {
   }, []);
   useEffect(() => { setTab(getTabFromUrl()); fetchList(); }, [fetchList]);
 
-  // Filtres + tri
   const items = useMemo(() => {
     let data = [...raw];
     if (tab==="images") data = data.filter(x=>x.kind==="image");
@@ -231,27 +217,6 @@ export default function GaleriePage() {
     if (idx>=0) { setLbIndex(idx); setLbOpen(true); }
   };
 
-  // Nav lightbox
-  useEffect(() => {
-    if (!lbOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key==="Escape") setLbOpen(false);
-      if (e.key==="ArrowLeft") setLbIndex(i => (i-1+viewList.length)%viewList.length);
-      if (e.key==="ArrowRight") setLbIndex(i => (i+1)%viewList.length);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [lbOpen, viewList.length]);
-  const onTouchStart = (e: React.TouchEvent) => { swipeStartX.current = e.touches[0].clientX; };
-  const onTouchEnd = (e: React.TouchEvent) => {
-    if (swipeStartX.current==null) return;
-    const dx = e.changedTouches[0].clientX - swipeStartX.current; swipeStartX.current = null;
-    if (Math.abs(dx)<40) return;
-    if (dx>0) setLbIndex(i=>(i-1+viewList.length)%viewList.length);
-    else setLbIndex(i=>(i+1)%viewList.length);
-  };
-
-  // ----- API actions
   async function doDelete() {
     if (selectedPublicIds.size===0) return;
     if (!confirm(`Supprimer ${selectedPublicIds.size} élément(s) ?`)) return;
@@ -294,11 +259,16 @@ export default function GaleriePage() {
     clearSel(); fetchList();
   }
 
-  // ----- Téléchargements
   function downloadMany(list: Item[]) {
     list.forEach((it, idx) => {
       const u = toDownloadUrl(it);
-      setTimeout(() => triggerDownload(u), idx * 150);
+      setTimeout(() => {
+        const iframe = document.createElement("iframe");
+        iframe.style.display = "none";
+        iframe.src = u;
+        document.body.appendChild(iframe);
+        setTimeout(() => iframe.remove(), 30000);
+      }, idx * 150);
     });
   }
   function downloadSelected() {
@@ -311,7 +281,6 @@ export default function GaleriePage() {
     downloadMany(items);
   }
 
-  // ----- Sélection globale
   const allVisibleSelected = useMemo(
     () => items.length > 0 && items.every(i => selectedPublicIds.has(i.public_id)),
     [items, selectedPublicIds]
@@ -325,13 +294,12 @@ export default function GaleriePage() {
     });
   };
 
-  // ----- UI
   return (
     <main className="px-6 py-24 text-white">
       <h1 className="text-3xl font-bold mb-2">Galerie</h1>
       <p className="mb-6 text-white/80">Photos, vidéos et documents du dossier Cloudinary <code>famille</code>.</p>
 
-      {/* Filtres haut */}
+      {/* Filtres / barre haute */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="inline-flex rounded-full border border-white/20 bg-black/30 p-1 gap-2">
           {(["all","images","videos","documents"] as const).map(k => (
@@ -346,7 +314,6 @@ export default function GaleriePage() {
           ))}
         </div>
 
-        {/* Recherche + tri + actions globales */}
         <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
           <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher par titre…"
                  className="w-full sm:w-72 rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none focus:ring-2 focus:ring-yellow-300/60"/>
@@ -362,15 +329,12 @@ export default function GaleriePage() {
           <button
             onClick={toggleSelectAllVisible}
             className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 hover:bg-white/20"
-            title="Sélectionner ou désélectionner tous les éléments visibles"
           >
             {allVisibleSelected ? "Tout désélectionner (vue)" : "Tout sélectionner (vue)"}
           </button>
-          {/* Télécharger tous les médias visibles */}
           <button
             onClick={downloadVisible}
             className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 hover:bg-white/20"
-            title="Télécharger tous les éléments visibles"
           >
             Télécharger (vue)
           </button>
@@ -382,7 +346,7 @@ export default function GaleriePage() {
         </div>
       </div>
 
-      {/* Barre d'actions entre filtres et grille */}
+      {/* Barre d’actions sélection */}
       {selectedPublicIds.size > 0 && (
         <div className="mt-3 mb-4 rounded-xl bg-black/80 border border-white/20 p-3 shadow-lg">
           <div className="flex flex-col sm:flex-row sm:items-center gap-3">
@@ -469,14 +433,19 @@ export default function GaleriePage() {
       {/* Lightbox */}
       {lbOpen && viewList.length>0 && (
         <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-50 p-4"
-             onClick={()=>setLbOpen(false)}
-             onTouchStart={(e)=>{swipeStartX.current=e.touches[0].clientX;}}
-             onTouchEnd={(e)=>{if(swipeStartX.current==null)return; const dx=e.changedTouches[0].clientX-swipeStartX.current; swipeStartX.current=null; if(Math.abs(dx)<40)return; if(dx>0)setLbIndex(i=>(i-1+viewList.length)%viewList.length); else setLbIndex(i=>(i+1)%viewList.length);}}>
+             onClick={()=>setLbOpen(false)}>
           <div className="relative max-w-6xl w-full max-h-[90vh]" onClick={(e)=>e.stopPropagation()}>
             <div className="absolute top-2 right-2 z-10 flex gap-2">
               <div className="rounded-full bg-black/60 px-3 py-1 text-sm">{lbIndex+1} / {viewList.length}</div>
               <button
-                onClick={() => triggerDownload(toDownloadUrl(viewList[lbIndex]))}
+                onClick={() => {
+                  const u = toDownloadUrl(viewList[lbIndex]);
+                  const iframe = document.createElement("iframe");
+                  iframe.style.display = "none";
+                  iframe.src = u;
+                  document.body.appendChild(iframe);
+                  setTimeout(() => iframe.remove(), 30000);
+                }}
                 className="rounded bg-white/80 text-black px-3 py-1 text-sm hover:bg-white"
               >
                 Télécharger
@@ -489,6 +458,29 @@ export default function GaleriePage() {
               >
                 Ouvrir
               </a>
+
+              {/* Migration RAW si ancien PDF en image/upload */}
+              {isLegacyPdfNeedingRaw(viewList[lbIndex]) && (
+                <button
+                  onClick={async () => {
+                    const cur = viewList[lbIndex];
+                    const res = await fetch("/api/media/migrate-pdf", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ public_id: cur.public_id, url: cur.url }),
+                    });
+                    const j = await res.json();
+                    if (!res.ok) { alert(j?.error || "Migration échouée"); return; }
+                    alert("✅ PDF migré en RAW. Rafraîchissement…");
+                    await fetchList();
+                    setLbOpen(false);
+                  }}
+                  className="rounded bg-orange-400 text-black px-3 py-1 text-sm hover:bg-orange-300"
+                  title="Ré-uploader ce PDF en RAW (corrige les 401 & aperçus)"
+                >
+                  Corriger PDF (RAW)
+                </button>
+              )}
             </div>
 
             <button onClick={()=>setLbOpen(false)}
@@ -515,11 +507,9 @@ export default function GaleriePage() {
 
                 // ---- Documents ----
                 if (ext === "pdf") {
-                  // PDF => rendu local pdf.js (fiable)
-                  return <PdfInline url={cur.url} />;
+                  return <PdfInline url={cur.url} />; // pdf.js
                 }
                 if (AUDIO_EXTS.has(ext)) {
-                  // Audio => lecteur audio natif
                   return (
                     <div className="w-full h-[80vh] grid place-items-center">
                       <audio src={cur.url} controls autoPlay />
@@ -527,14 +517,11 @@ export default function GaleriePage() {
                   );
                 }
                 if (OFFICE_EXTS.has(ext)) {
-                  // Word/Excel/PowerPoint => Office Online Viewer
                   return <iframe src={officeViewerUrl(cur.url)} className="w-full h-[80vh]" />;
                 }
                 if (TEXT_EXTS.has(ext)) {
-                  // Textes => iframe direct (affichage brut)
                   return <iframe src={cur.url} className="w-full h-[80vh]" />;
                 }
-                // Fallback générique
                 return <iframe src={cur.url} className="w-full h-[80vh]" />;
               })()}
             </div>
