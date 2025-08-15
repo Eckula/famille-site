@@ -136,7 +136,9 @@ function PdfInline({ url }: { url: string }) {
         if (!ctx) return;
         canvas.width = viewport.width;
         canvas.height = viewport.height;
-        await pg.render({ canvasContext: ctx, viewport }).promise;
+        // ✅ pdfjs v5: 'canvas' est requis dans RenderParameters
+        // @ts-expect-error (types stricts variables selon sous-versions)
+        await pg.render({ canvasContext: ctx, viewport, canvas }).promise;
       } catch (e) {
         if (!cancelled) console.warn("pdf.js render warn:", e);
       }
@@ -147,13 +149,13 @@ function PdfInline({ url }: { url: string }) {
   return (
     <div className="w-full h-[80vh] bg-black/20 flex flex-col items-center justify-start">
       <div className="w-full flex items-center justify-center gap-3 p-2 bg-black/40 text-white text-sm">
-        <button onClick={()=>setScale(s=>Math.max(0.5, s-0.1))} className="px-2 py-1 rounded border border-white/30">-</button>
+        <button type="button" onClick={()=>setScale(s=>Math.max(0.5, s-0.1))} className="px-2 py-1 rounded border border-white/30">-</button>
         <div>Zoom {(scale*100).toFixed(0)}%</div>
-        <button onClick={()=>setScale(s=>Math.min(3, s+0.1))} className="px-2 py-1 rounded border border-white/30">+</button>
+        <button type="button" onClick={()=>setScale(s=>Math.min(3, s+0.1))} className="px-2 py-1 rounded border border-white/30">+</button>
         <div className="mx-3">|</div>
-        <button onClick={()=>setPage(p=>Math.max(1, p-1))} className="px-2 py-1 rounded border border-white/30">←</button>
+        <button type="button" onClick={()=>setPage(p=>Math.max(1, p-1))} className="px-2 py-1 rounded border border-white/30">←</button>
         <div>Page {Math.min(page, numPages || 1)} / {numPages || "…"}</div>
-        <button onClick={()=>setPage(p=>Math.min(numPages||1, p+1))} className="px-2 py-1 rounded border border-white/30">→</button>
+        <button type="button" onClick={()=>setPage(p=>Math.min(numPages||1, p+1))} className="px-2 py-1 rounded border border-white/30">→</button>
       </div>
 
       {err ? (
@@ -184,6 +186,7 @@ export default function GaleriePage() {
 
   const [lbOpen, setLbOpen] = useState(false);
   const [lbIndex, setLbIndex] = useState(0);
+  const [migrating, setMigrating] = useState(false);
 
   const fetchList = useCallback(async () => {
     setLoading(true);
@@ -259,16 +262,21 @@ export default function GaleriePage() {
     clearSel(); fetchList();
   }
 
+  // Téléchargement fiable (geste utilisateur)
+  function triggerDownload(url: string, filename?: string) {
+    const a = document.createElement("a");
+    a.href = url;
+    if (filename) a.download = filename;
+    a.target = "_blank";
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
   function downloadMany(list: Item[]) {
     list.forEach((it, idx) => {
       const u = toDownloadUrl(it);
-      setTimeout(() => {
-        const iframe = document.createElement("iframe");
-        iframe.style.display = "none";
-        iframe.src = u;
-        document.body.appendChild(iframe);
-        setTimeout(() => iframe.remove(), 30000);
-      }, idx * 150);
+      setTimeout(() => triggerDownload(u, it.title || it.public_id), idx * 150);
     });
   }
   function downloadSelected() {
@@ -322,17 +330,17 @@ export default function GaleriePage() {
             <option value="newest">Plus récents</option>
             <option value="oldest">Plus anciens</option>
           </select>
-          <button onClick={fetchList} disabled={loading}
+          <button type="button" onClick={fetchList} disabled={loading}
                   className="rounded-lg border border-white/20 bg-black/30 px-3 py-2">
             {loading ? "Chargement…" : "Rafraîchir"}
           </button>
-          <button
+          <button type="button"
             onClick={toggleSelectAllVisible}
             className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 hover:bg-white/20"
           >
             {allVisibleSelected ? "Tout désélectionner (vue)" : "Tout sélectionner (vue)"}
           </button>
-          <button
+          <button type="button"
             onClick={downloadVisible}
             className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 hover:bg-white/20"
           >
@@ -354,19 +362,19 @@ export default function GaleriePage() {
               {selectedPublicIds.size} élément{selectedPublicIds.size > 1 ? "s" : ""} sélectionné{selectedPublicIds.size > 1 ? "s" : ""}
             </div>
             <div className="flex gap-2 flex-wrap">
-              <button onClick={downloadSelected} className="px-3 py-2 rounded bg-blue-500 text-black hover:bg-blue-400">
+              <button type="button" onClick={downloadSelected} className="px-3 py-2 rounded bg-blue-500 text-black hover:bg-blue-400">
                 Télécharger sélection
               </button>
-              <button onClick={doDelete} className="px-3 py-2 rounded bg-red-500 text-black hover:bg-red-400">
+              <button type="button" onClick={doDelete} className="px-3 py-2 rounded bg-red-500 text-black hover:bg-red-400">
                 Supprimer
               </button>
               <input value={moveFolder} onChange={e=>setMoveFolder(e.target.value)}
                      placeholder="Dossier cible (ex: famille/Photos/2025)"
                      className="rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none" />
-              <button onClick={doMove} className="px-3 py-2 rounded bg-yellow-500 text-black hover:bg-yellow-400">
+              <button type="button" onClick={doMove} className="px-3 py-2 rounded bg-yellow-500 text-black hover:bg-yellow-400">
                 Déplacer
               </button>
-              <button onClick={clearSel} className="px-3 py-2 rounded border border-white/30 hover:bg-white/10">
+              <button type="button" onClick={clearSel} className="px-3 py-2 rounded border border-white/30 hover:bg-white/10">
                 Annuler
               </button>
             </div>
@@ -414,6 +422,7 @@ export default function GaleriePage() {
                     )
                   ) : isDoc ? (
                     <button
+                      type="button"
                       onClick={()=>openLightboxFor(m.id)}
                       className="w-full h-full grid place-items-center bg-white/5 text-white/90"
                       title="Aperçu"
@@ -438,13 +447,10 @@ export default function GaleriePage() {
             <div className="absolute top-2 right-2 z-10 flex gap-2">
               <div className="rounded-full bg-black/60 px-3 py-1 text-sm">{lbIndex+1} / {viewList.length}</div>
               <button
+                type="button"
                 onClick={() => {
-                  const u = toDownloadUrl(viewList[lbIndex]);
-                  const iframe = document.createElement("iframe");
-                  iframe.style.display = "none";
-                  iframe.src = u;
-                  document.body.appendChild(iframe);
-                  setTimeout(() => iframe.remove(), 30000);
+                  const cur = viewList[lbIndex];
+                  triggerDownload(toDownloadUrl(cur), cur.title || cur.public_id);
                 }}
                 className="rounded bg-white/80 text-black px-3 py-1 text-sm hover:bg-white"
               >
@@ -462,32 +468,41 @@ export default function GaleriePage() {
               {/* Migration RAW si ancien PDF en image/upload */}
               {isLegacyPdfNeedingRaw(viewList[lbIndex]) && (
                 <button
+                  type="button"
+                  disabled={migrating}
                   onClick={async () => {
-                    const cur = viewList[lbIndex];
-                    const res = await fetch("/api/media/migrate-pdf", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ public_id: cur.public_id, url: cur.url }),
-                    });
-                    const j = await res.json();
-                    if (!res.ok) { alert(j?.error || "Migration échouée"); return; }
-                    alert("✅ PDF migré en RAW. Rafraîchissement…");
-                    await fetchList();
-                    setLbOpen(false);
+                    try {
+                      setMigrating(true);
+                      const cur = viewList[lbIndex];
+                      const res = await fetch("/api/media/migrate-pdf", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ public_id: cur.public_id, url: cur.url }),
+                      });
+                      const j = await res.json();
+                      if (!res.ok) { alert(j?.error || "Migration échouée"); return; }
+                      alert("✅ PDF migré en RAW. Rafraîchissement…");
+                      await fetchList();
+                      setLbOpen(false);
+                    } catch (e: any) {
+                      alert(e?.message || "Erreur réseau");
+                    } finally {
+                      setMigrating(false);
+                    }
                   }}
-                  className="rounded bg-orange-400 text-black px-3 py-1 text-sm hover:bg-orange-300"
+                  className={`rounded ${migrating ? "bg-orange-300" : "bg-orange-400 hover:bg-orange-300"} text-black px-3 py-1 text-sm`}
                   title="Ré-uploader ce PDF en RAW (corrige les 401 & aperçus)"
                 >
-                  Corriger PDF (RAW)
+                  {migrating ? "Migration…" : "Corriger PDF (RAW)"}
                 </button>
               )}
             </div>
 
-            <button onClick={()=>setLbOpen(false)}
+            <button type="button" onClick={()=>setLbOpen(false)}
                     className="absolute top-2 left-2 z-10 rounded-full border border-white/30 px-3 py-1 bg-black/40">✕</button>
-            <button onClick={()=>setLbIndex(i=>(i-1+viewList.length)%viewList.length)}
+            <button type="button" onClick={()=>setLbIndex(i=>(i-1+viewList.length)%viewList.length)}
                     className="absolute left-2 top-1/2 -translate-y-1/2 z-10 h-12 w-12 rounded-full bg-black/60 hover:bg-black/80 grid place-items-center text-2xl">←</button>
-            <button onClick={()=>setLbIndex(i=>(i+1)%viewList.length)}
+            <button type="button" onClick={()=>setLbIndex(i=>(i+1)%viewList.length)}
                     className="absolute right-2 top-1/2 -translate-y-1/2 z-10 h-12 w-12 rounded-full bg-black/60 hover:bg-black/80 grid place-items-center text-2xl">→</button>
 
             <div className="bg-black/40 rounded-lg overflow-hidden border border-white/20">
