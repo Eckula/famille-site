@@ -1,69 +1,54 @@
 // app/galerie/page.tsx
 "use client";
 
-
-import Link from "next/link";
 import Image from "next/image";
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-// ---------- Types ----------
+/* =========================================================
+ * Types
+ * =======================================================*/
 type Kind = "image" | "video" | "document";
 type Item = {
-  id: string;
-  public_id: string;
+  id: string;            // identifiant court éventuel
+  public_id: string;     // identifiant Cloudinary complet (incluant dossier)
   kind: Kind;
   title: string;
-  url: string;
+  url: string;           // URL Cloudinary (image/video)
   thumb?: string;
   createdAt: string;
-  format?: string;
+  format?: string;       // ex: "pdf", "docx", "jpg"...
   folder?: string;
 };
+
 type Tab = "all" | "images" | "videos" | "documents";
 
-// ---------- Helpers ----------
-function extFromItem(it: Item) {
-  if (it.format) return it.format.toLowerCase();
-  try {
-    const p = new URL(it.url).pathname.toLowerCase();
-    const m = p.match(/\.([a-z0-9]+)(?:\?|$)/i);
-    return m ? m[1] : "";
-  } catch { return ""; }
-}
-const OFFICE_EXTS = new Set(["doc","docx","xls","xlsx","ppt","pptx"]);
-const AUDIO_EXTS  = new Set(["mp3","wav","m4a","aac","flac","ogg","oga"]);
-const TEXT_EXTS   = new Set(["txt","csv","json","log","md"]);
+/* =========================================================
+ * Helpers
+ * =======================================================*/
 
-function withTransformation(url: string, tr: string) {
-  const i = url.indexOf("/upload/");
-  if (i === -1) return url;
-  const head = url.slice(0, i + "/upload/".length);
-  const tail = url.slice(i + "/upload/".length);
-  return `${head}${tr}/${tail}`;
-}
-function toDownloadUrl(item: Item) {
-  return withTransformation(item.url, "fl_attachment");
-}
-function officeViewerUrl(url: string) {
-  return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url)}`;
-}
-function isYouTube(url: string) {
-  return /youtu\.be|youtube\.com/.test(url);
-}
+// Icône simple selon extension
 const docEmoji = (ext?: string) => {
   const e = (ext || "").toLowerCase();
   if (e === "pdf") return "📄";
-  if (["doc","docx"].includes(e)) return "📝";
-  if (["xls","xlsx","csv"].includes(e)) return "📊";
-  if (["ppt","pptx"].includes(e)) return "📽️";
-  if (AUDIO_EXTS.has(e)) return "🎵";
-  if (["zip","rar","7z","tar","gz"].includes(e)) return "🗜️";
+  if (["doc", "docx"].includes(e)) return "📝";
+  if (["xls", "xlsx", "csv"].includes(e)) return "📊";
+  if (["ppt", "pptx"].includes(e)) return "📽️";
+  if (["mp3", "wav", "aac", "m4a", "flac", "ogg", "oga"].includes(e)) return "🎵";
+  if (["zip", "rar", "7z", "tar", "gz"].includes(e)) return "🗜️";
   return "📎";
 };
+
+// Déduit le dossier (utile pour "Déplacer")
 const folderOf = (it: Item) =>
   (it.folder && it.folder.length > 0)
     ? it.folder.replace(/\/+$/,"")
     : it.public_id.split("/").slice(0, -1).join("/").replace(/\/+$/,"");
+
+// Détecte YouTube
+const isYouTube = (url: string) => /youtu\.be|youtube\.com/.test(url);
+
+// Lis l'onglet depuis l'URL
 function getTabFromUrl(): Tab {
   if (typeof window === "undefined") return "all";
   const sp = new URLSearchParams(window.location.search);
@@ -71,133 +56,25 @@ function getTabFromUrl(): Tab {
   return (["all","images","videos","documents"].includes(t) ? (t as Tab) : "all");
 }
 
-// ---------- PDF inline (import pdf.js uniquement côté client) ----------
-function PdfInline({ url, publicId }: { url: string; publicId: string }) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const pdfRef = useRef<any | null>(null);
-  const [api, setApi] = useState<{ getDocument: any } | null>(null);
-  const [numPages, setNumPages] = useState<number>(0);
-  const [page, setPage] = useState(1);
-  const [scale, setScale] = useState(1.15);
-  const [err, setErr] = useState<string | null>(null);
-
-  // charge pdf.js uniquement au browser
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      const mod = await import("pdfjs-dist");
-      mod.GlobalWorkerOptions.workerSrc =
-        "https://cdn.jsdelivr.net/npm/pdfjs-dist@5.4.54/build/pdf.worker.min.js";
-      if (mounted) setApi({ getDocument: mod.getDocument });
-    })();
-    return () => { mounted = false; };
-  }, []);
-
-  // récupère une URL lisible (public → directe, sinon → URL signée)
-  async function getReadableUrl(): Promise<string> {
-    // 1) direct
-    try {
-      const r = await fetch(url, { method: "HEAD" });
-      if (r.ok) return url;
-    } catch {}
-    // 2) signée (si asset authentifié)
-    try {
-      const r = await fetch("/api/media/signed-raw-url", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ public_id: publicId, format: "pdf" }),
-      });
-      if (r.ok) {
-        const { url: signed } = await r.json();
-        const rr = await fetch(signed, { method: "HEAD" });
-        if (rr.ok) return signed;
-      }
-    } catch {}
-    // 3) fallback : fl_attachment
-    return withTransformation(url, "fl_attachment");
-  }
-
-  // charge le PDF
-  useEffect(() => {
-    if (!api) return;
-    let cancelled = false;
-    const ac = new AbortController();
-
-    (async () => {
-      setErr(null); setNumPages(0); setPage(1); pdfRef.current = null;
-
-      let data: ArrayBuffer | null = null;
-      let lastErr: any = null;
-      const candidate = await getReadableUrl();
-
-      try {
-        const resp = await fetch(candidate, { signal: ac.signal });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        data = await resp.arrayBuffer();
-      } catch (e) { lastErr = e; }
-
-      if (!data) throw lastErr || new Error("fetch failed");
-
-      const pdf = await api.getDocument({ data }).promise;
-      if (cancelled) return;
-      pdfRef.current = pdf;
-      setNumPages(pdf.numPages);
-    })().catch((e) => {
-      console.error("pdf.js load error:", e);
-      if (!cancelled) setErr("Impossible d'afficher le PDF (pdf.js).");
-    });
-
-    return () => { cancelled = true; ac.abort(); };
-  }, [api, url, publicId]);
-
-  // rend la page courante
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const pdf = pdfRef.current;
-        const canvas = canvasRef.current;
-        if (!pdf || !canvas) return;
-        const p = Math.min(Math.max(1, page), pdf.numPages);
-        const pg = await pdf.getPage(p);
-        const viewport = pg.getViewport({ scale });
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        const task: any = pg.render({ canvasContext: ctx, viewport, canvas });
-        await (task?.promise ?? task);
-      } catch (e) {
-        if (!cancelled) console.warn("pdf.js render warn:", e);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [page, scale, url]);
-
-  return (
-    <div className="w-full h-[80vh] bg-black/20 flex flex-col items-center justify-start">
-      <div className="w-full flex items-center justify-center gap-3 p-2 bg-black/40 text-white text-sm">
-        <button type="button" onClick={()=>setScale(s=>Math.max(0.5, s-0.1))} className="px-2 py-1 rounded border border-white/30">-</button>
-        <div>Zoom {(scale*100).toFixed(0)}%</div>
-        <button type="button" onClick={()=>setScale(s=>Math.min(3, s+0.1))} className="px-2 py-1 rounded border border-white/30">+</button>
-        <div className="mx-3">|</div>
-        <button type="button" onClick={()=>setPage(p=>Math.max(1, p-1))} className="px-2 py-1 rounded border border-white/30">←</button>
-        <div>Page {Math.min(page, numPages || 1)} / {numPages || "…"}</div>
-        <button type="button" onClick={()=>setPage(p=>Math.min(numPages||1, p+1))} className="px-2 py-1 rounded border border-white/30">→</button>
-      </div>
-
-      {err ? (
-        <div className="flex-1 grid place-items-center text-white/80 p-6">{err}</div>
-      ) : (
-        <div className="flex-1 overflow-auto w-full grid place-items-center p-3">
-          <canvas ref={canvasRef} style={{ background: "white", maxWidth: "100%", height: "auto" }} />
-        </div>
-      )}
-    </div>
-  );
+// URL proxy (serveur) signée pour OUVRIR/TÉLÉCHARGER un document
+function signedFileUrl(item: Item, opts?: { download?: boolean }) {
+  const fmt = (item.format || "pdf").toLowerCase();
+  const pid = encodeURIComponent(item.public_id);
+  const dl  = opts?.download ? "&dl=1" : "";
+  return `/api/media/file?public_id=${pid}&format=${encodeURIComponent(fmt)}${dl}`;
 }
 
-// ---------- Page ----------
+// URL de téléchargement pour image/vidéo (public Cloudinary)
+// (on reste en direct pour la vidéo; pour document on passe par signedFileUrl)
+function directDownloadUrl(item: Item) {
+  const base = item.url;
+  return base.includes("?") ? `${base}&fl_attachment` : `${base}?fl_attachment`;
+}
+
+/* =========================================================
+ * Composant
+ * =======================================================*/
+
 export default function GaleriePage() {
   const [raw, setRaw] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
@@ -206,18 +83,21 @@ export default function GaleriePage() {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<"newest"|"oldest">("newest");
 
+  // Sélection (clé = public_id)
   const [selectedPublicIds, setSelectedPublicIds] = useState<Set<string>>(new Set());
   const toggleSel = (publicId: string) =>
     setSelectedPublicIds(s => (s.has(publicId) ? new Set([...s].filter(x=>x!==publicId)) : new Set(s).add(publicId)));
   const clearSel = () => setSelectedPublicIds(new Set());
+
+  // Déplacement
   const [moveFolder, setMoveFolder] = useState("famille/Photos");
 
+  // Lightbox
   const [lbOpen, setLbOpen] = useState(false);
   const [lbIndex, setLbIndex] = useState(0);
+  const swipeStartX = useRef<number|null>(null);
 
-  const [reuploading, setReuploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-
+  // Chargement liste
   const fetchList = useCallback(async () => {
     setLoading(true);
     try {
@@ -228,6 +108,7 @@ export default function GaleriePage() {
   }, []);
   useEffect(() => { setTab(getTabFromUrl()); fetchList(); }, [fetchList]);
 
+  // Filtres + tri
   const items = useMemo(() => {
     let data = [...raw];
     if (tab==="images") data = data.filter(x=>x.kind==="image");
@@ -243,12 +124,36 @@ export default function GaleriePage() {
     return data;
   }, [raw, tab, query, sort]);
 
-  const viewList = items;
+  // Lightbox sur TOUT ce qui est visible (images + vidéos + documents)
+  const playable = items;
 
+  // Ouvrir lightbox
   const openLightboxFor = (id: string) => {
-    const idx = viewList.findIndex(x=>x.id===id);
+    const idx = playable.findIndex(x=>x.id===id);
     if (idx>=0) { setLbIndex(idx); setLbOpen(true); }
   };
+
+  // Nav lightbox
+  useEffect(() => {
+    if (!lbOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key==="Escape") setLbOpen(false);
+      if (e.key==="ArrowLeft") setLbIndex(i => (i-1+playable.length)%playable.length);
+      if (e.key==="ArrowRight") setLbIndex(i => (i+1)%playable.length);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lbOpen, playable.length]);
+  const onTouchStart = (e: React.TouchEvent) => { swipeStartX.current = e.touches[0].clientX; };
+  const onTouchEnd = (e: React.TouchEvent) => {
+    if (swipeStartX.current==null) return;
+    const dx = e.changedTouches[0].clientX - swipeStartX.current; swipeStartX.current = null;
+    if (Math.abs(dx)<40) return;
+    if (dx>0) setLbIndex(i=>(i-1+playable.length)%playable.length);
+    else setLbIndex(i=>(i+1)%playable.length);
+  };
+
+  /* ---------------------- Actions API ---------------------- */
 
   async function doDelete() {
     if (selectedPublicIds.size===0) return;
@@ -292,32 +197,40 @@ export default function GaleriePage() {
     clearSel(); fetchList();
   }
 
-  // Téléchargement fiable
-  function triggerDownload(url: string, filename?: string) {
-    const a = document.createElement("a");
-    a.href = url;
-    if (filename) a.download = filename;
-    a.target = "_blank";
-    a.rel = "noopener";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+  /* ---------------------- Téléchargements ------------------ */
+
+  function getDownloadHref(it: Item) {
+    if (it.kind === "document") {
+      return signedFileUrl(it, { download: true });
+    }
+    // images / vidéos -> direct
+    return directDownloadUrl(it);
   }
+
   function downloadMany(list: Item[]) {
     list.forEach((it, idx) => {
-      const u = toDownloadUrl(it);
-      setTimeout(() => triggerDownload(u, it.title || it.public_id), idx * 150);
+      const a = document.createElement("a");
+      a.href = getDownloadHref(it);
+      a.download = it.title || it.public_id;
+      a.target = "_blank";
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      setTimeout(() => { a.click(); a.remove(); }, idx * 120);
     });
   }
+
   function downloadSelected() {
     if (selectedPublicIds.size === 0) return;
     const list = items.filter(i => selectedPublicIds.has(i.public_id));
     downloadMany(list);
   }
+
   function downloadVisible() {
     if (items.length === 0) return;
     downloadMany(items);
   }
+
+  /* ---------------------- Sélection globale ---------------- */
 
   const allVisibleSelected = useMemo(
     () => items.length > 0 && items.every(i => selectedPublicIds.has(i.public_id)),
@@ -332,44 +245,16 @@ export default function GaleriePage() {
     });
   };
 
-  // ---- Ré-UPLOAD RAW depuis la lightbox
-  async function onPickReuploadFile(e: React.ChangeEvent<HTMLInputElement>) {
-    try {
-      const f = e.target.files?.[0];
-      if (!f) return;
-      const cur = viewList[lbIndex];
-      if (!cur) return;
-
-      if (f.type !== "application/pdf") {
-        alert("Choisis un fichier PDF.");
-        return;
-      }
-      setReuploading(true);
-      const fd = new FormData();
-      fd.append("public_id", cur.public_id);
-      fd.append("file", f);
-
-      const res = await fetch("/api/media/reupload-raw", { method: "POST", body: fd });
-      const j = await res.json();
-      if (!res.ok) { alert(j?.error || "Ré-upload RAW échoué"); return; }
-
-      alert("✅ PDF ré-uploadé en RAW. Rafraîchissement…");
-      await fetchList();
-      setLbOpen(false);
-    } catch (err: any) {
-      alert(err?.message || "Erreur réseau");
-    } finally {
-      setReuploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
-  }
+  /* =========================================================
+   * Rendu
+   * =======================================================*/
 
   return (
     <main className="px-6 py-24 text-white">
       <h1 className="text-3xl font-bold mb-2">Galerie</h1>
       <p className="mb-6 text-white/80">Photos, vidéos et documents du dossier Cloudinary <code>famille</code>.</p>
 
-      {/* Filtres / barre haute */}
+      {/* Filtres haut */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="inline-flex rounded-full border border-white/20 bg-black/30 p-1 gap-2">
           {(["all","images","videos","documents"] as const).map(k => (
@@ -384,6 +269,7 @@ export default function GaleriePage() {
           ))}
         </div>
 
+        {/* Recherche + tri + actions globales */}
         <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
           <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher par titre…"
                  className="w-full sm:w-72 rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none focus:ring-2 focus:ring-yellow-300/60"/>
@@ -392,19 +278,21 @@ export default function GaleriePage() {
             <option value="newest">Plus récents</option>
             <option value="oldest">Plus anciens</option>
           </select>
-          <button type="button" onClick={fetchList} disabled={loading}
+          <button onClick={fetchList} disabled={loading}
                   className="rounded-lg border border-white/20 bg-black/30 px-3 py-2">
             {loading ? "Chargement…" : "Rafraîchir"}
           </button>
-          <button type="button"
+          <button
             onClick={toggleSelectAllVisible}
             className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 hover:bg-white/20"
+            title="Sélectionner ou désélectionner tous les éléments visibles"
           >
             {allVisibleSelected ? "Tout désélectionner (vue)" : "Tout sélectionner (vue)"}
           </button>
-          <button type="button"
+          <button
             onClick={downloadVisible}
             className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 hover:bg-white/20"
+            title="Télécharger tous les éléments visibles"
           >
             Télécharger (vue)
           </button>
@@ -416,7 +304,7 @@ export default function GaleriePage() {
         </div>
       </div>
 
-      {/* Barre d’actions sélection */}
+      {/* Barre d'actions entre filtres et grille */}
       {selectedPublicIds.size > 0 && (
         <div className="mt-3 mb-4 rounded-xl bg-black/80 border border-white/20 p-3 shadow-lg">
           <div className="flex flex-col sm:flex-row sm:items-center gap-3">
@@ -424,19 +312,19 @@ export default function GaleriePage() {
               {selectedPublicIds.size} élément{selectedPublicIds.size > 1 ? "s" : ""} sélectionné{selectedPublicIds.size > 1 ? "s" : ""}
             </div>
             <div className="flex gap-2 flex-wrap">
-              <button type="button" onClick={downloadSelected} className="px-3 py-2 rounded bg-blue-500 text-black hover:bg-blue-400">
+              <button onClick={downloadSelected} className="px-3 py-2 rounded bg-blue-500 text-black hover:bg-blue-400">
                 Télécharger sélection
               </button>
-              <button type="button" onClick={doDelete} className="px-3 py-2 rounded bg-red-500 text-black hover:bg-red-400">
+              <button onClick={doDelete} className="px-3 py-2 rounded bg-red-500 text-black hover:bg-red-400">
                 Supprimer
               </button>
               <input value={moveFolder} onChange={e=>setMoveFolder(e.target.value)}
                      placeholder="Dossier cible (ex: famille/Photos/2025)"
                      className="rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none" />
-              <button type="button" onClick={doMove} className="px-3 py-2 rounded bg-yellow-500 text-black hover:bg-yellow-400">
+              <button onClick={doMove} className="px-3 py-2 rounded bg-yellow-500 text-black hover:bg-yellow-400">
                 Déplacer
               </button>
-              <button type="button" onClick={clearSel} className="px-3 py-2 rounded border border-white/30 hover:bg-white/10">
+              <button onClick={clearSel} className="px-3 py-2 rounded border border-white/30 hover:bg-white/10">
                 Annuler
               </button>
             </div>
@@ -483,16 +371,17 @@ export default function GaleriePage() {
                              onClick={()=>openLightboxFor(m.id)} />
                     )
                   ) : isDoc ? (
-                    <button
-                      type="button"
-                      onClick={()=>openLightboxFor(m.id)}
+                    <a
+                      href={signedFileUrl(m)} // ouverture fiable via proxy
+                      target="_blank"
+                      rel="noopener noreferrer"
                       className="w-full h-full grid place-items-center bg-white/5 text-white/90"
-                      title="Aperçu"
+                      title="Ouvrir / Voir le document"
                     >
                       <div className="text-base sm:text-lg">
-                        {docEmoji(extFromItem(m))} {m.title}{m.format?`.${m.format}`:""}
+                        {docEmoji(m.format)} {m.title}{m.format?`.${m.format}`:""}
                       </div>
-                    </button>
+                    </a>
                   ) : null}
                 </div>
               </div>
@@ -501,67 +390,73 @@ export default function GaleriePage() {
         </div>
       )}
 
-      {/* Lightbox */}
-      {lbOpen && viewList.length>0 && (
+      {/* Lightbox : images + vidéos + documents */}
+      {lbOpen && playable.length>0 && (
         <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-50 p-4"
-             onClick={()=>setLbOpen(false)}>
+             onClick={()=>setLbOpen(false)} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
           <div className="relative max-w-6xl w-full max-h-[90vh]" onClick={(e)=>e.stopPropagation()}>
-            {/* input caché pour ré-upload RAW */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="application/pdf"
-              className="hidden"
-              onChange={onPickReuploadFile}
-            />
-
             <div className="absolute top-2 right-2 z-10 flex gap-2">
-              <div className="rounded-full bg-black/60 px-3 py-1 text-sm">{lbIndex+1} / {viewList.length}</div>
-              <button
-                type="button"
-                onClick={() => {
-                  const cur = viewList[lbIndex];
-                  triggerDownload(toDownloadUrl(cur), cur.title || cur.public_id);
-                }}
-                className="rounded bg-white/80 text-black px-3 py-1 text-sm hover:bg-white"
-              >
-                Télécharger
-              </button>
-              <a
-                href={viewList[lbIndex].url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="rounded bg-white/20 text-white px-3 py-1 text-sm hover:bg-white/30"
-              >
-                Ouvrir
-              </a>
+              <div className="rounded-full bg-black/60 px-3 py-1 text-sm">{lbIndex+1} / {playable.length}</div>
 
-              {/* Ré-UPLOAD RAW : corrige définitivement les PDF 401 */}
-              {extFromItem(viewList[lbIndex]) === "pdf" && (
-                <button
-                  type="button"
-                  disabled={reuploading}
-                  onClick={() => fileInputRef.current?.click()}
-                  className={`rounded ${reuploading ? "bg-orange-300" : "bg-orange-400 hover:bg-orange-300"} text-black px-3 py-1 text-sm`}
-                  title="Ré-uploader ce PDF en RAW (corrige les erreurs 401)"
-                >
-                  {reuploading ? "Ré-upload…" : "Ré-uploader PDF (RAW)"}
-                </button>
-              )}
+              {/* Bouton Télécharger/Ouvrir selon type */}
+              {(() => {
+                const cur = playable[lbIndex];
+                if (cur.kind === "document") {
+                  return (
+                    <>
+                      <a
+                        href={signedFileUrl(cur, { download: true })}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="rounded bg-white/80 text-black px-3 py-1 text-sm hover:bg-white"
+                      >
+                        Télécharger
+                      </a>
+                      <a
+                        href={signedFileUrl(cur)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="rounded bg-white/80 text-black px-3 py-1 text-sm hover:bg-white"
+                      >
+                        Ouvrir
+                      </a>
+                    </>
+                  );
+                }
+                // image / vidéo
+                return (
+                  <>
+                    <a
+                      href={getDownloadHref(cur)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded bg-white/80 text-black px-3 py-1 text-sm hover:bg-white"
+                    >
+                      Télécharger
+                    </a>
+                    <a
+                      href={cur.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded bg-white/80 text-black px-3 py-1 text-sm hover:bg-white"
+                    >
+                      Ouvrir
+                    </a>
+                  </>
+                );
+              })()}
             </div>
 
-            <button type="button" onClick={()=>setLbOpen(false)}
+            <button onClick={()=>setLbOpen(false)}
                     className="absolute top-2 left-2 z-10 rounded-full border border-white/30 px-3 py-1 bg-black/40">✕</button>
-            <button type="button" onClick={()=>setLbIndex(i=>(i-1+viewList.length)%viewList.length)}
+            <button onClick={()=>setLbIndex(i=>(i-1+playable.length)%playable.length)}
                     className="absolute left-2 top-1/2 -translate-y-1/2 z-10 h-12 w-12 rounded-full bg-black/60 hover:bg-black/80 grid place-items-center text-2xl">←</button>
-            <button type="button" onClick={()=>setLbIndex(i=>(i+1)%viewList.length)}
+            <button onClick={()=>setLbIndex(i=>(i+1)%playable.length)}
                     className="absolute right-2 top-1/2 -translate-y-1/2 z-10 h-12 w-12 rounded-full bg-black/60 hover:bg-black/80 grid place-items-center text-2xl">→</button>
 
             <div className="bg-black/40 rounded-lg overflow-hidden border border-white/20">
               {(() => {
-                const cur = viewList[lbIndex];
-                const ext = extFromItem(cur);
-
+                const cur = playable[lbIndex];
                 if (cur.kind === "image") {
                   return <Image src={cur.url} alt={cur.title} width={1200} height={800} className="max-h-[80vh] w-full object-contain" />;
                 }
@@ -571,25 +466,8 @@ export default function GaleriePage() {
                 if (cur.kind === "video") {
                   return <video src={cur.url} className="max-h-[80vh] w-full object-contain" controls autoPlay playsInline />;
                 }
-
-                // ---- Documents ----
-                if (ext === "pdf") {
-                  return <PdfInline url={cur.url} publicId={cur.public_id} />;
-                }
-                if (AUDIO_EXTS.has(ext)) {
-                  return (
-                    <div className="w-full h-[80vh] grid place-items-center">
-                      <audio src={cur.url} controls autoPlay />
-                    </div>
-                  );
-                }
-                if (OFFICE_EXTS.has(ext)) {
-                  return <iframe src={officeViewerUrl(cur.url)} className="w-full h-[80vh]" />;
-                }
-                if (TEXT_EXTS.has(ext)) {
-                  return <iframe src={cur.url} className="w-full h-[80vh]" />;
-                }
-                return <iframe src={cur.url} className="w-full h-[80vh]" />;
+                // Document : affichage via proxy (inline)
+                return <iframe src={signedFileUrl(cur)} className="w-full h-[80vh]" />;
               })()}
             </div>
           </div>
@@ -598,4 +476,5 @@ export default function GaleriePage() {
     </main>
   );
 }
+
 
