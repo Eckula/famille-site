@@ -2,20 +2,20 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image"; // ✅ remplacement <img>
+import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Kind = "image" | "video" | "document";
 type Item = {
-  id: string;
-  public_id: string;
+  id: string;            // identifiant "court" éventuel
+  public_id: string;     // identifiant Cloudinary complet (incluant le dossier)
   kind: Kind;
   title: string;
   url: string;
   thumb?: string;
   createdAt: string;
   format?: string;
-  folder?: string;
+  folder?: string;       // si présent, c'est le dossier courant
 };
 type Tab = "all" | "images" | "videos" | "documents";
 
@@ -35,11 +35,11 @@ const docEmoji = (ext?: string) => {
   if (["zip","rar","7z","tar","gz"].includes(e)) return "🗜️";
   return "📎";
 };
-
-// ✅ Fonction pour détecter si c’est un lien YouTube
-function isYouTube(url: string) {
-  return /youtu\.be|youtube\.com/.test(url);
-}
+const isYouTube = (url: string) => /youtu\.be|youtube\.com/.test(url);
+const folderOf = (it: Item) =>
+  (it.folder && it.folder.length > 0)
+    ? it.folder.replace(/\/+$/,"")
+    : it.public_id.split("/").slice(0, -1).join("/").replace(/\/+$/,"");
 
 export default function GaleriePage() {
   const [raw, setRaw] = useState<Item[]>([]);
@@ -49,15 +49,19 @@ export default function GaleriePage() {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<"newest"|"oldest">("newest");
 
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const toggleSel = (id: string) => setSelectedIds(s => (s.has(id) ? new Set([...s].filter(x=>x!==id)) : new Set(s).add(id)));
-  const clearSel = () => setSelectedIds(new Set());
+  // --- Sélection (utilise public_id pour l'API)
+  const [selectedPublicIds, setSelectedPublicIds] = useState<Set<string>>(new Set());
+  const toggleSel = (publicId: string) =>
+    setSelectedPublicIds(s => (s.has(publicId) ? new Set([...s].filter(x=>x!==publicId)) : new Set(s).add(publicId)));
+  const clearSel = () => setSelectedPublicIds(new Set());
   const [moveFolder, setMoveFolder] = useState("famille/Photos");
 
+  // --- Lightbox
   const [lbOpen, setLbOpen] = useState(false);
   const [lbIndex, setLbIndex] = useState(0);
   const swipeStartX = useRef<number|null>(null);
 
+  // Chargement
   const fetchList = useCallback(async () => {
     setLoading(true);
     try {
@@ -66,21 +70,19 @@ export default function GaleriePage() {
       setRaw(j.items ?? []);
     } finally { setLoading(false); }
   }, []);
-
   useEffect(() => {
     setTab(getTabFromUrl());
     fetchList();
   }, [fetchList]);
 
+  // Filtres + tri
   const items = useMemo(() => {
     let data = [...raw];
     if (tab==="images") data = data.filter(x=>x.kind==="image");
     if (tab==="videos") data = data.filter(x=>x.kind==="video");
     if (tab==="documents") data = data.filter(x=>x.kind==="document");
-
     const q = query.trim().toLowerCase();
     if (q) data = data.filter(x => x.title.toLowerCase().includes(q));
-
     data.sort((a,b)=>
       sort==="newest"
         ? +new Date(b.createdAt) - +new Date(a.createdAt)
@@ -91,11 +93,11 @@ export default function GaleriePage() {
 
   const playable = useMemo(()=> items.filter(x=>x.kind!=="document"), [items]);
 
+  // Lightbox
   const openLightboxFor = (id: string) => {
     const idx = playable.findIndex(x=>x.id===id);
     if (idx>=0) { setLbIndex(idx); setLbOpen(true); }
   };
-
   useEffect(() => {
     if (!lbOpen) return;
     const onKey = (e: KeyboardEvent) => {
@@ -106,13 +108,23 @@ export default function GaleriePage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [lbOpen, playable.length]);
+  const onTouchStart = (e: React.TouchEvent) => { swipeStartX.current = e.touches[0].clientX; };
+  const onTouchEnd = (e: React.TouchEvent) => {
+    if (swipeStartX.current==null) return;
+    const dx = e.changedTouches[0].clientX - swipeStartX.current; swipeStartX.current = null;
+    if (Math.abs(dx)<40) return;
+    if (dx>0) setLbIndex(i=>(i-1+playable.length)%playable.length);
+    else setLbIndex(i=>(i+1)%playable.length);
+  };
 
+  // Actions
   async function doDelete() {
-    if (selectedIds.size===0) return;
-    if (!confirm(`Supprimer ${selectedIds.size} élément(s) ?`)) return;
+    if (selectedPublicIds.size===0) return;
+    if (!confirm(`Supprimer ${selectedPublicIds.size} élément(s) ?`)) return;
+    const payload = { ids: Array.from(selectedPublicIds), public_ids: Array.from(selectedPublicIds) };
     const res = await fetch("/api/media/delete", {
       method:"POST", headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ ids: Array.from(selectedIds) })
+      body: JSON.stringify(payload)
     });
     const j = await res.json();
     if (!res.ok) alert(j?.error || "Erreur suppression.");
@@ -120,25 +132,47 @@ export default function GaleriePage() {
   }
 
   async function doMove() {
-    if (selectedIds.size===0) return;
-    if (!moveFolder.trim()) { alert("Renseigne un dossier cible (ex: famille/Photos/Anniversaires)"); return; }
+    if (selectedPublicIds.size===0) return;
+    const target = moveFolder.trim().replace(/\/+$/,"");
+    if (!target) { alert("Renseigne un dossier cible"); return; }
+
+    // Sépare ce qui est déjà au bon endroit vs. ce qui doit bouger
+    const selectedItems = items.filter(i => selectedPublicIds.has(i.public_id));
+    const already = selectedItems.filter(i => folderOf(i) === target);
+    const toMovePublicIds = selectedItems.filter(i => folderOf(i) !== target).map(i => i.public_id);
+
+    if (already.length && !toMovePublicIds.length) {
+      alert("Les éléments sélectionnés sont déjà dans ce dossier.");
+      return;
+    }
+    if (!toMovePublicIds.length) return;
+
+    const payload = { ids: toMovePublicIds, public_ids: toMovePublicIds, toFolder: target };
     const res = await fetch("/api/media/move", {
       method:"POST", headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ ids: Array.from(selectedIds), toFolder: moveFolder.trim() })
+      body: JSON.stringify(payload)
     });
     const j = await res.json();
     if (!res.ok) { alert(j?.error || "Erreur déplacement."); return; }
+
+    if (already.length) {
+      alert(`Déplacement effectué. ${already.length} élément(s) étaient déjà dans « ${target} » et ont été ignorés.`);
+    }
     clearSel(); fetchList();
   }
 
-  const onTouchStart = (e: React.TouchEvent) => { swipeStartX.current = e.touches[0].clientX; };
-  const onTouchEnd = (e: React.TouchEvent) => {
-    if (swipeStartX.current==null) return;
-    const dx = e.changedTouches[0].clientX - swipeStartX.current;
-    swipeStartX.current = null;
-    if (Math.abs(dx)<40) return;
-    if (dx>0) setLbIndex(i=>(i-1+playable.length)%playable.length);
-    else setLbIndex(i=>(i+1)%playable.length);
+  // --- TOUT SÉLECTIONNER (vue courante)
+  const allVisibleSelected = useMemo(
+    () => items.length > 0 && items.every(i => selectedPublicIds.has(i.public_id)),
+    [items, selectedPublicIds]
+  );
+  const toggleSelectAllVisible = () => {
+    setSelectedPublicIds(prev => {
+      const next = new Set(prev);
+      if (allVisibleSelected) items.forEach(i => next.delete(i.public_id));
+      else items.forEach(i => next.add(i.public_id));
+      return next;
+    });
   };
 
   return (
@@ -146,8 +180,8 @@ export default function GaleriePage() {
       <h1 className="text-3xl font-bold mb-2">Galerie</h1>
       <p className="mb-6 text-white/80">Photos, vidéos et documents du dossier Cloudinary <code>famille</code>.</p>
 
-      {/* Filtres */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
+      {/* Filtres (haut) */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="inline-flex rounded-full border border-white/20 bg-black/30 p-1 gap-2">
           {(["all","images","videos","documents"] as const).map(k => (
             <Link
@@ -161,7 +195,7 @@ export default function GaleriePage() {
           ))}
         </div>
 
-        {/* Recherche + tri */}
+        {/* Recherche + tri + sélection globale (vue) + bouton upload */}
         <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
           <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher par titre…"
                  className="w-full sm:w-72 rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none focus:ring-2 focus:ring-yellow-300/60"/>
@@ -174,6 +208,13 @@ export default function GaleriePage() {
                   className="rounded-lg border border-white/20 bg-black/30 px-3 py-2">
             {loading ? "Chargement…" : "Rafraîchir"}
           </button>
+          <button
+            onClick={toggleSelectAllVisible}
+            className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 hover:bg-white/20"
+            title="Sélectionner ou désélectionner tous les éléments visibles"
+          >
+            {allVisibleSelected ? "Tout désélectionner (vue)" : "Tout sélectionner (vue)"}
+          </button>
           <Link
             href={`/admin/upload?rubric=${tab==="images"?"Photos":tab==="videos"?"Vidéos":tab==="documents"?"Documents":"Photos"}`}
             className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-center hover:bg-white/20">
@@ -182,43 +223,60 @@ export default function GaleriePage() {
         </div>
       </div>
 
-      {/* Grille réduite sur PC */}
-      {loading ? (
-        <p className="text-white/70">Chargement…</p>
-      ) : items.length === 0 ? (
-        <div className="text-white/80">
-          <p>Aucun élément.</p>
+      {/* BARRE D'ACTIONS — placée entre les filtres et la grille */}
+      {selectedPublicIds.size > 0 && (
+        <div className="mt-3 mb-4 rounded-xl bg-black/80 border border-white/20 p-3 shadow-lg">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="text-sm text-white/90">
+              {selectedPublicIds.size} élément{selectedPublicIds.size > 1 ? "s" : ""} sélectionné{selectedPublicIds.size > 1 ? "s" : ""}
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              <button onClick={doDelete} className="px-3 py-2 rounded bg-red-500 text-black hover:bg-red-400">
+                Supprimer
+              </button>
+              <input value={moveFolder} onChange={e=>setMoveFolder(e.target.value)}
+                     placeholder="Dossier cible (ex: famille/Photos/2025)"
+                     className="rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none" />
+              <button onClick={doMove} className="px-3 py-2 rounded bg-yellow-500 text-black hover:bg-yellow-400">
+                Déplacer
+              </button>
+              <button onClick={clearSel} className="px-3 py-2 rounded border border-white/30 hover:bg-white/10">
+                Annuler
+              </button>
+            </div>
+          </div>
         </div>
+      )}
+
+      {/* Grille */}
+      {loading ? (
+        <p className="text-white/70 mt-6">Chargement…</p>
+      ) : items.length === 0 ? (
+        <div className="text-white/80 mt-6"><p>Aucun élément.</p></div>
       ) : (
-        <div className="grid gap-4 grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 grid-cols-2 lg:grid-cols-3 mt-4">
           {items.map(m => {
             const isImg = m.kind==="image";
             const isVid = m.kind==="video";
             return (
               <div key={m.id} className="relative overflow-hidden rounded-lg border border-white/20 group">
                 <label className="absolute top-2 left-2 z-10 inline-flex items-center gap-2 bg-black/50 rounded px-2 py-1 text-xs">
-                  <input type="checkbox" checked={selectedIds.has(m.id)} onChange={()=>toggleSel(m.id)} />
+                  <input
+                    type="checkbox"
+                    checked={selectedPublicIds.has(m.public_id)}
+                    onChange={()=>toggleSel(m.public_id)}
+                  />
                   Sélection
                 </label>
-
                 <div className="aspect-video">
                   {isImg ? (
-                    <Image
-                      src={m.thumb ?? m.url}
-                      alt={m.title}
-                      width={800}
-                      height={600}
-                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                      onClick={()=>openLightboxFor(m.id)}
-                    />
+                    <Image src={m.thumb ?? m.url} alt={m.title} width={800} height={600}
+                           className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                           onClick={()=>openLightboxFor(m.id)} />
                   ) : isVid ? (
                     isYouTube(m.url) ? (
-                      <iframe
-                        src={m.url.replace("watch?v=", "embed/")}
-                        className="w-full h-full"
-                        allow="autoplay; encrypted-media"
-                        allowFullScreen
-                      />
+                      <iframe src={m.url.replace("watch?v=", "embed/")} className="w-full h-full"
+                              allow="autoplay; encrypted-media" allowFullScreen />
                     ) : (
                       <video src={m.url} className="w-full h-full object-cover" preload="metadata" muted playsInline
                              onClick={()=>openLightboxFor(m.id)} />
@@ -245,12 +303,11 @@ export default function GaleriePage() {
               {lbIndex+1} / {playable.length}
             </div>
             <button onClick={()=>setLbOpen(false)}
-                    className="absolute top-2 left-2 z-10 rounded-full border border-white/30 px-3 py-1 bg-black/40" aria-label="Fermer">✕</button>
+                    className="absolute top-2 left-2 z-10 rounded-full border border-white/30 px-3 py-1 bg-black/40">✕</button>
             <button onClick={()=>setLbIndex(i=>(i-1+playable.length)%playable.length)}
-                    className="absolute left-2 top-1/2 -translate-y-1/2 z-10 h-12 w-12 rounded-full bg-black/60 hover:bg-black/80 grid place-items-center text-2xl" aria-label="Précédent">←</button>
+                    className="absolute left-2 top-1/2 -translate-y-1/2 z-10 h-12 w-12 rounded-full bg-black/60 hover:bg-black/80 grid place-items-center text-2xl">←</button>
             <button onClick={()=>setLbIndex(i=>(i+1)%playable.length)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 z-10 h-12 w-12 rounded-full bg-black/60 hover:bg-black/80 grid place-items-center text-2xl" aria-label="Suivant">→</button>
-
+                    className="absolute right-2 top-1/2 -translate-y-1/2 z-10 h-12 w-12 rounded-full bg-black/60 hover:bg-black/80 grid place-items-center text-2xl">→</button>
             <div className="bg-black/40 rounded-lg overflow-hidden border border-white/20">
               {(() => {
                 const cur = playable[lbIndex];
