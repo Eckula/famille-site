@@ -54,9 +54,6 @@ function officeViewerUrl(url: string) {
 function isYouTube(url: string) {
   return /youtu\.be|youtube\.com/.test(url);
 }
-function isLegacyPdfNeedingRaw(it: Item) {
-  return it.kind === "document" && extFromItem(it) === "pdf" && it.url.includes("/image/upload/");
-}
 const docEmoji = (ext?: string) => {
   const e = (ext || "").toLowerCase();
   if (e === "pdf") return "📄";
@@ -136,9 +133,10 @@ function PdfInline({ url }: { url: string }) {
         if (!ctx) return;
         canvas.width = viewport.width;
         canvas.height = viewport.height;
-        // ✅ pdfjs v5: 'canvas' est requis dans RenderParameters
-        // @ts-expect-error (types stricts variables selon sous-versions)
-        await pg.render({ canvasContext: ctx, viewport, canvas }).promise;
+
+        // pdf.js v5 : certains types imposent `canvas` dans les paramètres
+        const renderTask: any = (pg as any).render({ canvasContext: ctx, viewport, canvas });
+        await (renderTask?.promise ?? renderTask);
       } catch (e) {
         if (!cancelled) console.warn("pdf.js render warn:", e);
       }
@@ -186,7 +184,9 @@ export default function GaleriePage() {
 
   const [lbOpen, setLbOpen] = useState(false);
   const [lbIndex, setLbIndex] = useState(0);
-  const [migrating, setMigrating] = useState(false);
+
+  const [reuploading, setReuploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const fetchList = useCallback(async () => {
     setLoading(true);
@@ -262,7 +262,7 @@ export default function GaleriePage() {
     clearSel(); fetchList();
   }
 
-  // Téléchargement fiable (geste utilisateur)
+  // Téléchargement fiable
   function triggerDownload(url: string, filename?: string) {
     const a = document.createElement("a");
     a.href = url;
@@ -301,6 +301,39 @@ export default function GaleriePage() {
       return next;
     });
   };
+
+  // ---- Ré-UPLOAD RAW depuis la lightbox (corrige les PDF "image/upload" 401)
+  async function onPickReuploadFile(e: React.ChangeEvent<HTMLInputElement>) {
+    try {
+      const f = e.target.files?.[0];
+      if (!f) return;
+      const cur = viewList[lbIndex];
+      if (!cur) return;
+
+      if (f.type !== "application/pdf") {
+        alert("Choisis un fichier PDF.");
+        return;
+      }
+
+      setReuploading(true);
+      const fd = new FormData();
+      fd.append("public_id", cur.public_id);
+      fd.append("file", f);
+
+      const res = await fetch("/api/media/reupload-raw", { method: "POST", body: fd });
+      const j = await res.json();
+      if (!res.ok) { alert(j?.error || "Ré-upload RAW échoué"); return; }
+
+      alert("✅ PDF ré-uploadé en RAW. Rafraîchissement…");
+      await fetchList();
+      setLbOpen(false);
+    } catch (err: any) {
+      alert(err?.message || "Erreur réseau");
+    } finally {
+      setReuploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
 
   return (
     <main className="px-6 py-24 text-white">
@@ -444,6 +477,15 @@ export default function GaleriePage() {
         <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-50 p-4"
              onClick={()=>setLbOpen(false)}>
           <div className="relative max-w-6xl w-full max-h-[90vh]" onClick={(e)=>e.stopPropagation()}>
+            {/* input caché pour ré-upload RAW */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/pdf"
+              className="hidden"
+              onChange={onPickReuploadFile}
+            />
+
             <div className="absolute top-2 right-2 z-10 flex gap-2">
               <div className="rounded-full bg-black/60 px-3 py-1 text-sm">{lbIndex+1} / {viewList.length}</div>
               <button
@@ -465,35 +507,16 @@ export default function GaleriePage() {
                 Ouvrir
               </a>
 
-              {/* Migration RAW si ancien PDF en image/upload */}
-              {isLegacyPdfNeedingRaw(viewList[lbIndex]) && (
+              {/* Ré-UPLOAD RAW : règle définitivement les PDF 401 */}
+              {extFromItem(viewList[lbIndex]) === "pdf" && (
                 <button
                   type="button"
-                  disabled={migrating}
-                  onClick={async () => {
-                    try {
-                      setMigrating(true);
-                      const cur = viewList[lbIndex];
-                      const res = await fetch("/api/media/migrate-pdf", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ public_id: cur.public_id, url: cur.url }),
-                      });
-                      const j = await res.json();
-                      if (!res.ok) { alert(j?.error || "Migration échouée"); return; }
-                      alert("✅ PDF migré en RAW. Rafraîchissement…");
-                      await fetchList();
-                      setLbOpen(false);
-                    } catch (e: any) {
-                      alert(e?.message || "Erreur réseau");
-                    } finally {
-                      setMigrating(false);
-                    }
-                  }}
-                  className={`rounded ${migrating ? "bg-orange-300" : "bg-orange-400 hover:bg-orange-300"} text-black px-3 py-1 text-sm`}
-                  title="Ré-uploader ce PDF en RAW (corrige les 401 & aperçus)"
+                  disabled={reuploading}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`rounded ${reuploading ? "bg-orange-300" : "bg-orange-400 hover:bg-orange-300"} text-black px-3 py-1 text-sm`}
+                  title="Ré-uploader ce PDF en RAW (corrige les erreurs 401)"
                 >
-                  {migrating ? "Migration…" : "Corriger PDF (RAW)"}
+                  {reuploading ? "Ré-upload…" : "Ré-uploader PDF (RAW)"}
                 </button>
               )}
             </div>
