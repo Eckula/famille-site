@@ -8,7 +8,7 @@ const CLOUD  = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME!;
 const PRESET = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET!;
 
 type Status = "idle" | "uploading" | "done" | "error";
-const MAX_SIZE = 50 * 1024 * 1024;
+const MAX_SIZE = 50 * 1024 * 1024; // 50 Mo (inchangé)
 
 const RUBRICS = [
   { key: "Photos", label: "Photos" },
@@ -97,8 +97,14 @@ export default function UploadPage() {
           form.append("upload_preset", PRESET);
           form.append("folder", folder);
 
+          // 🔴 MODIF : PDF => endpoint raw/upload, sinon auto/upload
+          const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+          const endpoint = isPdf
+            ? `https://api.cloudinary.com/v1_1/${CLOUD}/raw/upload`
+            : `https://api.cloudinary.com/v1_1/${CLOUD}/auto/upload`;
+
           const xhr = new XMLHttpRequest();
-          xhr.open("POST", `https://api.cloudinary.com/v1_1/${CLOUD}/auto/upload`);
+          xhr.open("POST", endpoint);
           xhr.upload.onprogress = (ev) => {
             if (ev.lengthComputable) {
               setProgress((prev) => {

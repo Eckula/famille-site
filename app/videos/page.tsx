@@ -7,8 +7,14 @@ const YT_LINKS = [
   "https://youtu.be/E7C0ygg-DbI?si=VWoVmixRp9AnyUuV",
   "https://youtu.be/CMaBEXJk4FY?si=p-735NRRYvyTEKpa",
   "https://youtu.be/VmDYyAL5fSg?si=-yRbixjsCf_L6Oap",
-  "https://youtu.be/BhC5ip9ysBI?si=dHExBrIVeTmZc4lz"
-];
+  "https://youtu.be/BhC5ip9ysBI?si=dHExBrIVeTmZc4lz",
+  "https://youtu.be/O-mdIAyDhJc?si=Gans7TzwSo22364k",
+  "https://youtu.be/Tmv83peLhkw?si=0Tek2ZREvXy898q9",
+  "https://youtube.com/shorts/1x66RO7-SCU?si=c4Emff-uzqwlsif1",
+  "https://youtube.com/shorts/mUkQBTFF3J4?si=kqnRlnn4uol11Ycn",
+  "https://youtube.com/shorts/eg4Z4AGYJP8?si=m32tItJZcSjpYebT"
+ 
+,];
 
 function extractYouTubeId(url: string): string | null {
   try {
@@ -36,11 +42,11 @@ export default function VideosPage() {
   return (
     <main className="px-6 py-24 text-white">
       <h1 className="text-3xl font-bold mb-2">Vidéos</h1>
-      <p className="mb-6 text-white/80">Regardez nos clips & vlogs YouTube (non-répertoriées prises en charge).</p>
+      <p className="mb-6 text-white/80">Regardez nos vidéos en ligne YouTube (non-répertoriées).</p>
 
       <div className="mb-6">
         <Link href="/galerie?tab=videos" className="inline-block rounded-lg border border-white/20 bg-white/10 px-3 py-2 hover:bg-white/20">
-          Voir aussi les vidéos Cloudinary
+          Cliquez Ici pour voir nos autres Vidéos (HORS YOUTUBE)
         </Link>
       </div>
 
