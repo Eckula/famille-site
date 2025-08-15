@@ -1,14 +1,10 @@
 // app/galerie/page.tsx
 "use client";
 
+
 import Link from "next/link";
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-
-// ---------- PDF.js v5 ----------
-import { GlobalWorkerOptions, getDocument, PDFDocumentProxy } from "pdfjs-dist";
-GlobalWorkerOptions.workerSrc =
-  "https://cdn.jsdelivr.net/npm/pdfjs-dist@5.4.54/build/pdf.worker.min.js";
 
 // ---------- Types ----------
 type Kind = "image" | "video" | "document";
@@ -34,9 +30,9 @@ function extFromItem(it: Item) {
     return m ? m[1] : "";
   } catch { return ""; }
 }
-const OFFICE_EXTS = new Set(["doc", "docx", "xls", "xlsx", "ppt", "pptx"]);
-const AUDIO_EXTS  = new Set(["mp3", "wav", "m4a", "aac", "flac", "ogg", "oga"]);
-const TEXT_EXTS   = new Set(["txt", "csv", "json", "log", "md"]);
+const OFFICE_EXTS = new Set(["doc","docx","xls","xlsx","ppt","pptx"]);
+const AUDIO_EXTS  = new Set(["mp3","wav","m4a","aac","flac","ogg","oga"]);
+const TEXT_EXTS   = new Set(["txt","csv","json","log","md"]);
 
 function withTransformation(url: string, tr: string) {
   const i = url.indexOf("/upload/");
@@ -75,39 +71,74 @@ function getTabFromUrl(): Tab {
   return (["all","images","videos","documents"].includes(t) ? (t as Tab) : "all");
 }
 
-// ---------- Viewer PDF local (pdf.js) ----------
-function PdfInline({ url }: { url: string }) {
+// ---------- PDF inline (import pdf.js uniquement côté client) ----------
+function PdfInline({ url, publicId }: { url: string; publicId: string }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const pdfRef = useRef<PDFDocumentProxy | null>(null);
-
+  const pdfRef = useRef<any | null>(null);
+  const [api, setApi] = useState<{ getDocument: any } | null>(null);
   const [numPages, setNumPages] = useState<number>(0);
   const [page, setPage] = useState(1);
   const [scale, setScale] = useState(1.15);
   const [err, setErr] = useState<string | null>(null);
 
+  // charge pdf.js uniquement au browser
   useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const mod = await import("pdfjs-dist");
+      mod.GlobalWorkerOptions.workerSrc =
+        "https://cdn.jsdelivr.net/npm/pdfjs-dist@5.4.54/build/pdf.worker.min.js";
+      if (mounted) setApi({ getDocument: mod.getDocument });
+    })();
+    return () => { mounted = false; };
+  }, []);
+
+  // récupère une URL lisible (public → directe, sinon → URL signée)
+  async function getReadableUrl(): Promise<string> {
+    // 1) direct
+    try {
+      const r = await fetch(url, { method: "HEAD" });
+      if (r.ok) return url;
+    } catch {}
+    // 2) signée (si asset authentifié)
+    try {
+      const r = await fetch("/api/media/signed-raw-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ public_id: publicId, format: "pdf" }),
+      });
+      if (r.ok) {
+        const { url: signed } = await r.json();
+        const rr = await fetch(signed, { method: "HEAD" });
+        if (rr.ok) return signed;
+      }
+    } catch {}
+    // 3) fallback : fl_attachment
+    return withTransformation(url, "fl_attachment");
+  }
+
+  // charge le PDF
+  useEffect(() => {
+    if (!api) return;
     let cancelled = false;
     const ac = new AbortController();
 
     (async () => {
       setErr(null); setNumPages(0); setPage(1); pdfRef.current = null;
 
-      // Essai direct puis fallback fl_attachment
-      const candidates = [url, withTransformation(url, "fl_attachment")];
-
-      let buf: ArrayBuffer | null = null;
+      let data: ArrayBuffer | null = null;
       let lastErr: any = null;
-      for (const u of candidates) {
-        try {
-          const resp = await fetch(u, { signal: ac.signal });
-          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-          buf = await resp.arrayBuffer();
-          break;
-        } catch (e) { lastErr = e; }
-      }
-      if (!buf) throw lastErr || new Error("fetch failed");
+      const candidate = await getReadableUrl();
 
-      const pdf = await getDocument({ data: buf }).promise;
+      try {
+        const resp = await fetch(candidate, { signal: ac.signal });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        data = await resp.arrayBuffer();
+      } catch (e) { lastErr = e; }
+
+      if (!data) throw lastErr || new Error("fetch failed");
+
+      const pdf = await api.getDocument({ data }).promise;
       if (cancelled) return;
       pdfRef.current = pdf;
       setNumPages(pdf.numPages);
@@ -117,8 +148,9 @@ function PdfInline({ url }: { url: string }) {
     });
 
     return () => { cancelled = true; ac.abort(); };
-  }, [url]);
+  }, [api, url, publicId]);
 
+  // rend la page courante
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -133,16 +165,14 @@ function PdfInline({ url }: { url: string }) {
         if (!ctx) return;
         canvas.width = viewport.width;
         canvas.height = viewport.height;
-
-        // pdf.js v5 : certains types imposent `canvas` dans les paramètres
-        const renderTask: any = (pg as any).render({ canvasContext: ctx, viewport, canvas });
-        await (renderTask?.promise ?? renderTask);
+        const task: any = pg.render({ canvasContext: ctx, viewport, canvas });
+        await (task?.promise ?? task);
       } catch (e) {
         if (!cancelled) console.warn("pdf.js render warn:", e);
       }
     })();
     return () => { cancelled = true; };
-  }, [page, scale]);
+  }, [page, scale, url]);
 
   return (
     <div className="w-full h-[80vh] bg-black/20 flex flex-col items-center justify-start">
@@ -302,7 +332,7 @@ export default function GaleriePage() {
     });
   };
 
-  // ---- Ré-UPLOAD RAW depuis la lightbox (corrige les PDF "image/upload" 401)
+  // ---- Ré-UPLOAD RAW depuis la lightbox
   async function onPickReuploadFile(e: React.ChangeEvent<HTMLInputElement>) {
     try {
       const f = e.target.files?.[0];
@@ -314,7 +344,6 @@ export default function GaleriePage() {
         alert("Choisis un fichier PDF.");
         return;
       }
-
       setReuploading(true);
       const fd = new FormData();
       fd.append("public_id", cur.public_id);
@@ -507,7 +536,7 @@ export default function GaleriePage() {
                 Ouvrir
               </a>
 
-              {/* Ré-UPLOAD RAW : règle définitivement les PDF 401 */}
+              {/* Ré-UPLOAD RAW : corrige définitivement les PDF 401 */}
               {extFromItem(viewList[lbIndex]) === "pdf" && (
                 <button
                   type="button"
@@ -545,7 +574,7 @@ export default function GaleriePage() {
 
                 // ---- Documents ----
                 if (ext === "pdf") {
-                  return <PdfInline url={cur.url} />; // pdf.js
+                  return <PdfInline url={cur.url} publicId={cur.public_id} />;
                 }
                 if (AUDIO_EXTS.has(ext)) {
                   return (
@@ -569,3 +598,4 @@ export default function GaleriePage() {
     </main>
   );
 }
+
