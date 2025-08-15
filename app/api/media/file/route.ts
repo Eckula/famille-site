@@ -4,7 +4,7 @@ import { v2 as cloudinary } from "cloudinary";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-/* ---------------- Cloudinary server creds ---------------- */
+/* ---------- Cloudinary server creds ---------- */
 const CLOUD =
   process.env.CLOUDINARY_CLOUD_NAME ||
   process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
@@ -12,12 +12,17 @@ const API_KEY = process.env.CLOUDINARY_API_KEY;
 const API_SECRET = process.env.CLOUDINARY_API_SECRET;
 
 if (CLOUD && API_KEY && API_SECRET) {
-  cloudinary.config({ cloud_name: CLOUD, api_key: API_KEY, api_secret: API_SECRET, secure: true });
+  cloudinary.config({
+    cloud_name: CLOUD,
+    api_key: API_KEY,
+    api_secret: API_SECRET,
+    secure: true,
+  });
 } else {
   console.warn("[/api/media/file] Missing CLOUDINARY_* server credentials");
 }
 
-/* ---------------- helpers ---------------- */
+/* ---------- helpers ---------- */
 function splitPublicId(id: string) {
   const safe = id.split("/").map(s => s.trim()).filter(Boolean).join("/");
   const hasExt = /\.[^/\.]+$/.test(safe);
@@ -45,19 +50,57 @@ function buildPublicUrl(opts: {
   return `${base}${download ? "/fl_attachment" : ""}/${tail}`;
 }
 
-async function streamFrom(url: string, asAttachment: boolean, filename?: string) {
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok || !res.body) return { ok: false, status: res.status as number };
+/**
+ * Stream Cloudinary -> client en propageant Range/206 et les en-têtes utiles.
+ */
+async function pipeFrom(url: string, asAttachment: boolean, filename: string, req: NextRequest, forcePdf = false) {
+  const range = req.headers.get("range") || undefined;
+
+  const upstream = await fetch(url, {
+    cache: "no-store",
+    headers: range ? { Range: range } : undefined,
+    redirect: "follow",
+  });
+
+  if (!upstream.ok && upstream.status !== 206) {
+    return { ok: false, status: upstream.status as number };
+  }
+  if (!upstream.body) return { ok: false, status: 502 };
 
   const headers = new Headers();
-  headers.set("Content-Type", res.headers.get("content-type") || "application/octet-stream");
-  headers.set("Cache-Control", "private, max-age=0, must-revalidate");
-  if (asAttachment) {
-    const fallback = decodeURIComponent(url.split("/").pop() || "file");
-    const name = sanitizeName(filename || fallback);
-    headers.set("Content-Disposition", `attachment; filename="${name}"`);
+
+  // Content-Type
+  const ct = upstream.headers.get("content-type") || "";
+  if (forcePdf) {
+    headers.set("Content-Type", "application/pdf");
+  } else {
+    headers.set("Content-Type", ct || "application/octet-stream");
   }
-  return { ok: true, response: new Response(res.body, { status: 200, headers }) };
+
+  // Disposition
+  const disp = asAttachment ? "attachment" : "inline";
+  headers.set("Content-Disposition", `${disp}; filename="${sanitizeName(filename)}"`);
+
+  // Cache + exposition d’entêtes pour le navigateur
+  headers.set("Cache-Control", "private, max-age=0, must-revalidate");
+  headers.set("Access-Control-Expose-Headers", "Content-Disposition, Content-Length, Content-Range, Accept-Ranges");
+
+  // Propage quelques entêtes utiles au Range
+  const cr = upstream.headers.get("content-range");
+  const ar = upstream.headers.get("accept-ranges") || "bytes";
+  const cl = upstream.headers.get("content-length");
+
+  if (cr) headers.set("Content-Range", cr);
+  if (ar) headers.set("Accept-Ranges", ar);
+  if (cl) headers.set("Content-Length", cl);
+
+  const lm = upstream.headers.get("last-modified");
+  const etag = upstream.headers.get("etag");
+  if (lm) headers.set("Last-Modified", lm);
+  if (etag) headers.set("ETag", etag);
+
+  const status = upstream.status === 206 || cr ? 206 : 200;
+  return { ok: true, response: new Response(upstream.body, { status, headers }) };
 }
 
 async function tryPublicVariants(
@@ -65,7 +108,9 @@ async function tryPublicVariants(
   publicIdNoExt: string,
   ext: string | undefined,
   asAttachment: boolean,
-  filename?: string
+  filename: string,
+  req: NextRequest,
+  forcePdf = false
 ) {
   const rts: Array<"raw"|"image"|"video"> = ["raw","image","video"];
   const urls: string[] = [];
@@ -76,7 +121,7 @@ async function tryPublicVariants(
   const tried: Array<{ url: string; status?: number }> = [];
   for (const u of urls) {
     try {
-      const out = await streamFrom(u, asAttachment, filename);
+      const out = await pipeFrom(u, asAttachment, filename, req, forcePdf);
       if (out.ok) return { response: out.response };
       tried.push({ url: u, status: out.status });
     } catch { tried.push({ url: u, status: undefined }); }
@@ -92,7 +137,7 @@ async function tryAdminResource(publicIdNoExt: string) {
   ];
   for (const c of combos) {
     try {
-      // @ts-ignore
+      // @ts-ignore cloudinary types lax
       const r = await cloudinary.api.resource(publicIdNoExt, c);
       return r as { public_id:string; resource_type:"raw"|"image"|"video"; type:"upload"|"authenticated"|"private"; format?:string; filename?:string };
     } catch (e:any) {
@@ -102,7 +147,6 @@ async function tryAdminResource(publicIdNoExt: string) {
   return null;
 }
 
-/** Fallback “Admin listing by prefix” – balaye par préfixe (sans dossier) */
 async function huntAdminByPrefix(fileNameOnly: string) {
   const combos: Array<{resource_type:"raw"|"image"|"video"; type:"upload"|"authenticated"|"private"}> = [
     { resource_type:"raw", type:"upload" }, { resource_type:"raw", type:"authenticated" }, { resource_type:"raw", type:"private" },
@@ -111,8 +155,8 @@ async function huntAdminByPrefix(fileNameOnly: string) {
   ];
 
   const prefixes = [
-    fileNameOnly,                 // abc123
-    `famille/${fileNameOnly}`,    // famille/abc123
+    fileNameOnly,
+    `famille/${fileNameOnly}`,
     `famille/Photos/${fileNameOnly}`,
     `famille/Documents/${fileNameOnly}`,
     `famille/Autres/${fileNameOnly}`,
@@ -121,7 +165,7 @@ async function huntAdminByPrefix(fileNameOnly: string) {
   for (const pref of prefixes) {
     for (const c of combos) {
       try {
-        // @ts-ignore
+        // @ts-ignore cloudinary types lax
         const res = await cloudinary.api.resources({
           ...c,
           prefix: pref,
@@ -172,6 +216,7 @@ async function searchAnywhere(noExt: string, fileNameOnly: string) {
   } catch { return null; }
 }
 
+/** URL signée Cloudinary (private_download_url) */
 function buildSignedDownloadURL(
   r: { public_id:string; resource_type:"raw"|"image"|"video"; type:"upload"|"authenticated"|"private"; format?:string; filename?:string },
   asAttachment: boolean,
@@ -190,7 +235,7 @@ function buildSignedDownloadURL(
   );
 }
 
-/* ---------------- handler ---------------- */
+/* ---------- handler ---------- */
 export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url);
@@ -207,10 +252,11 @@ export async function GET(req: NextRequest) {
     const effectiveFormat = formatQuery || extFromId;
     const defaultName = `${fileNameOnly}.${(effectiveFormat || "bin")}`;
     const downloadName = sanitizeName(customFilenameParam || defaultName);
+    const isPdf = (effectiveFormat || "").toLowerCase() === "pdf";
 
-    // 1) URLs publiques (raw/image/video, avec/sans ext)
-    const pub = await tryPublicVariants(CLOUD, noExt, effectiveFormat, dl, downloadName);
-    if ('response' in pub && pub.response) return pub.response;
+    // 1) URLs publiques (raw/image/video, avec/sans ext) — Range-friendly
+    const pub = await tryPublicVariants(CLOUD, noExt, effectiveFormat, dl, downloadName, req, isPdf);
+    if ("response" in pub && pub.response) return pub.response;
 
     // 2) fallback signé (Admin/Search)
     if (!(API_KEY && API_SECRET)) {
@@ -224,7 +270,7 @@ export async function GET(req: NextRequest) {
     let res =
       (await tryAdminResource(noExt)) ||
       (await searchAnywhere(noExt, fileNameOnly)) ||
-      (await huntAdminByPrefix(fileNameOnly)); // <— NOUVEAU filet
+      (await huntAdminByPrefix(fileNameOnly));
 
     if (!res) {
       const triedList = (pub.tried || []).map(t => `- ${t.url} -> ${t.status ?? "error"}`).join("\n");
@@ -235,7 +281,7 @@ export async function GET(req: NextRequest) {
     }
 
     const signed = buildSignedDownloadURL(res, dl, effectiveFormat, downloadName);
-    const out = await streamFrom(signed, dl, downloadName);
+    const out = await pipeFrom(signed, dl, downloadName, req, isPdf);
     if (out.ok) return out.response;
 
     return new Response(`Proxy error: Signed delivery failed (${out.status}).`, { status: 404 });
