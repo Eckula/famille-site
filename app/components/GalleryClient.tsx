@@ -34,19 +34,19 @@ function inferKind(it: GalleryItem): "image" | "video" | "audio" | "document" {
 }
 
 export default function GalleryClient({ items = [] as GalleryItem[] }) {
-  const router = useRouter();
+  const router   = useRouter();
   const pathname = usePathname();
-  const sp = useSearchParams();
+  const sp       = useSearchParams();
 
   const tab = (sp.get("tab") || "tout").toLowerCase();
   const q   = (sp.get("q") || "").trim();
 
-  // Sécurité UX : /galerie?tab=documents → redirige vers /admin si pas connecté
+  // Sécurité UX: /galerie?tab=documents → si pas connecté, redirige vers /admin
   useEffect(() => {
     if (tab !== "documents") return;
     fetch("/api/me", { cache: "no-store" })
-      .then(r => r.ok ? r.json() : null)
-      .then(j => {
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
         if (!j?.role) {
           const next = `${pathname}?${sp.toString()}`;
           router.replace(`/admin?next=${encodeURIComponent(next)}`);
@@ -60,7 +60,7 @@ export default function GalleryClient({ items = [] as GalleryItem[] }) {
     { key: "tout",      label: "Tout" },
     { key: "photos",    label: "Photos" },
     { key: "videos",    label: "Vidéos" },
-    { key: "audio",     label: "Audio" },   // 👈 NOUVEL ONGLET
+    { key: "audio",     label: "Audio" },      // 👈 NOUVEL ONGLET
     { key: "documents", label: "Documents" },
   ];
 
@@ -69,7 +69,7 @@ export default function GalleryClient({ items = [] as GalleryItem[] }) {
       const k = inferKind(it);
       if (tab === "photos")    return k === "image";
       if (tab === "videos")    return k === "video";
-      if (tab === "audio")     return k === "audio";
+      if (tab === "audio")     return k === "audio";      // 👈 mp3 & co ici
       if (tab === "documents") return k === "document";
       return true;
     });
@@ -91,7 +91,7 @@ export default function GalleryClient({ items = [] as GalleryItem[] }) {
 
   return (
     <section>
-      {/* Tabs + recherche */}
+      {/* Onglets + recherche */}
       <div className="mb-2 flex flex-wrap items-center gap-3 text-white">
         {tabs.map((t) => (
           <button
@@ -124,21 +124,15 @@ export default function GalleryClient({ items = [] as GalleryItem[] }) {
                 ) : kind === "video" ? (
                   <video src={it.url} className="h-full w-full object-cover" controls preload="metadata" />
                 ) : kind === "audio" ? (
-                  <div className="flex h-full items-center justify-center p-4 text-white/90">
-                    🎵 {it.title || "Audio"}
-                  </div>
+                  <div className="flex h-full items-center justify-center p-4 text-white/90">🎵 {it.title || "Audio"}</div>
                 ) : (
-                  <div className="flex h-full items-center justify-center p-4 text-white/90">
-                    📄 {it.title || "Document"}
-                  </div>
+                  <div className="flex h-full items-center justify-center p-4 text-white/90">📄 {it.title || "Document"}</div>
                 )}
               </div>
               <div className="p-3">
                 <div className="truncate font-medium">{it.title}</div>
                 {it.createdAt && (
-                  <div className="text-xs text-white/70">
-                    {new Date(it.createdAt).toLocaleDateString("fr-FR")}
-                  </div>
+                  <div className="text-xs text-white/70">{new Date(it.createdAt).toLocaleDateString("fr-FR")}</div>
                 )}
               </div>
             </article>
@@ -146,9 +140,7 @@ export default function GalleryClient({ items = [] as GalleryItem[] }) {
         })}
       </div>
 
-      {filtered.length === 0 && (
-        <div className="mt-6 text-center text-white/70">Aucun élément.</div>
-      )}
+      {filtered.length === 0 && <div className="mt-6 text-center text-white/70">Aucun élément.</div>}
     </section>
   );
 }

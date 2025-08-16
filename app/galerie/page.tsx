@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 /* ---------- Types ---------- */
 
-type Kind = "image" | "video" | "document";
+type Kind = "image" | "video" | "audio" | "document";
 type Item = {
   id: string;
   public_id: string; // Cloudinary public_id (avec dossier)
@@ -16,11 +16,11 @@ type Item = {
   url: string;
   thumb?: string;
   createdAt: string;
-  format?: string; // "pdf", "docx", ...
+  format?: string; // "pdf", "mp3", "docx", ...
   folder?: string;
   resource_type?: "image" | "video" | "raw";
 };
-type Tab = "all" | "images" | "videos" | "documents";
+type Tab = "all" | "images" | "videos" | "audio" | "documents";
 
 /* ---------- Helpers ---------- */
 
@@ -29,12 +29,14 @@ const isYouTube = (url: string) => /youtu\.be|youtube\.com/.test(url);
 function getTabFromUrl(): Tab {
   if (typeof window === "undefined") return "all";
   const t = (new URLSearchParams(window.location.search).get("tab") || "all").toLowerCase();
-  return (["all","images","videos","documents"] as const).includes(t as Tab) ? (t as Tab) : "all";
+  const allowed: Tab[] = ["all", "images", "videos", "audio", "documents"];
+  return (allowed as readonly string[]).includes(t) ? (t as Tab) : "all";
 }
 
 const officeExts = ["doc","docx","ppt","pptx","xls","xlsx"];
-const imageExts = ["jpg","jpeg","png","gif","webp","heic","heif","avif","bmp","tiff","svg"];
-const videoExts = ["mp4","mov","webm","mkv","avi","m4v"];
+const imageExts  = ["jpg","jpeg","png","gif","webp","heic","heif","avif","bmp","tiff","svg"];
+const videoExts  = ["mp4","mov","webm","mkv","avi","m4v"];
+const audioExts  = ["mp3","wav","m4a","aac","ogg","oga","flac"];
 
 function docEmoji(ext?: string) {
   const e = (ext || "").toLowerCase();
@@ -42,7 +44,7 @@ function docEmoji(ext?: string) {
   if (["doc","docx"].includes(e)) return "📝";
   if (["xls","xlsx","csv"].includes(e)) return "📊";
   if (["ppt","pptx"].includes(e)) return "📽️";
-  if (["mp3","wav","aac","m4a","flac","ogg","oga"].includes(e)) return "🎵";
+  if (audioExts.includes(e))      return "🎵";
   if (["zip","rar","7z","tar","gz"].includes(e)) return "🗜️";
   return "📎";
 }
@@ -130,12 +132,13 @@ export default function GaleriePage() {
         const primaryUrl: string = x.url || x.secure_url || x.path || "";
         const fmt = (x.format || "") || (primaryUrl.includes(".") ? primaryUrl.split(".").pop()?.toLowerCase() : "");
 
-        const rt = (x.resource_type || "").toLowerCase();
+        const rt  = (x.resource_type || "").toLowerCase();
         const ext = String(fmt || "").toLowerCase();
-        const isImg = rt === "image" || imageExts.includes(ext);
-        const isVid = rt === "video" || videoExts.includes(ext);
-        const kind: Kind = isImg ? "image" : isVid ? "video" : "document";
+        const isImg   = rt === "image" || imageExts.includes(ext);
+        const isAudio = audioExts.includes(ext); // 👈 détection audio (Cloudinary range souvent l’audio en resource_type "video")
+        const isVid   = (!isAudio && (rt === "video" || videoExts.includes(ext)));
 
+        const kind: Kind = isImg ? "image" : isAudio ? "audio" : isVid ? "video" : "document";
         const createdAt = x.createdAt || x.created_at || x.uploaded_at || new Date().toISOString();
 
         return {
@@ -143,7 +146,7 @@ export default function GaleriePage() {
           public_id,
           kind,
           title,
-          url: primaryUrl, // on ne s’en sert que pour les miniatures/vidéos publiques
+          url: primaryUrl, // pour miniatures/vidéos publiques
           thumb: x.thumb || x.thumbnail_url || x.secure_url || primaryUrl,
           createdAt,
           format: ext || undefined,
@@ -170,8 +173,9 @@ export default function GaleriePage() {
   /* ---------- Filtres / Tri ---------- */
   const items = useMemo(() => {
     let data = [...raw];
-    if (tab==="images") data = data.filter(x=>x.kind==="image");
-    if (tab==="videos") data = data.filter(x=>x.kind==="video");
+    if (tab==="images")    data = data.filter(x=>x.kind==="image");
+    if (tab==="videos")    data = data.filter(x=>x.kind==="video");
+    if (tab==="audio")     data = data.filter(x=>x.kind==="audio");     // 👈 audio
     if (tab==="documents") data = data.filter(x=>x.kind==="document");
     const q = query.trim().toLowerCase();
     if (q) data = data.filter(x => (x.title || "").toLowerCase().includes(q));
@@ -183,7 +187,7 @@ export default function GaleriePage() {
     return data;
   }, [raw, tab, query, sort]);
 
-  const viewable = items; // tout est “ouvrable” (doc via iframe)
+  const viewable = items; // tout est ouvrable (images/vidéos/audio/doc via iframe)
 
   /* ---------- Actions API ---------- */
 
@@ -242,7 +246,7 @@ export default function GaleriePage() {
         document.body.appendChild(a);
         a.click();
         a.remove();
-      }, idx * 150); // cadence (évite les bloqueurs popup agressifs)
+      }, idx * 150);
     });
   }
 
@@ -302,29 +306,29 @@ export default function GaleriePage() {
 
   return (
     <main className="px-6 py-24 text-white">
-      <h1 className="text-3xl font-bold mb-2">Galerie</h1>
+      <h1 className="mb-2 text-3xl font-bold">Galerie</h1>
       <p className="mb-2 text-white/80">Photos, vidéos et documents du dossier Cloudinary <code>famille</code>.</p>
       {errorMsg && <p className="mt-2 mb-4 text-red-300 text-sm">⚠️ {errorMsg}</p>}
 
       {/* Filtres haut */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="inline-flex rounded-full border border-white/20 bg-black/30 p-1 gap-2">
-          {(["all","images","videos","documents"] as const).map(k => (
+        <div className="inline-flex gap-2 rounded-full border border-white/20 bg-black/30 p-1">
+          {(["all","images","videos","audio","documents"] as const).map(k => (
             <Link
               key={k} prefetch={false}
               href={`/galerie?tab=${k}`}
               onClick={()=>setTab(k)}
-              className={`px-4 py-2 rounded-full ${tab===k ? "bg-white/20" : "hover:bg-white/10"}`}
+              className={`rounded-full px-4 py-2 ${tab===k ? "bg-white/20" : "hover:bg-white/10"}`}
             >
-              {k==="all" ? "Tout" : k==="images" ? "Photos" : k==="videos" ? "Vidéos" : "Documents"}
+              {k==="all" ? "Tout" : k==="images" ? "Photos" : k==="videos" ? "Vidéos" : k==="audio" ? "Audio" : "Documents"}
             </Link>
           ))}
         </div>
 
         {/* Recherche + tri + actions globales */}
-        <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+        <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
           <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher par titre…"
-            className="w-full sm:w-72 rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none focus:ring-2 focus:ring-yellow-300/60"/>
+            className="w-full rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none focus:ring-2 focus:ring-yellow-300/60 sm:w-72"/>
           <select value={sort} onChange={e=>setSort(e.target.value as any)}
             className="rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none">
             <option value="newest">Plus récents</option>
@@ -349,7 +353,9 @@ export default function GaleriePage() {
             Télécharger (vue)
           </button>
           <Link
-            href={`/admin/upload?rubric=${tab==="images"?"Photos":tab==="videos"?"Vidéos":tab==="documents"?"Documents":"Photos"}`}
+            href={`/admin/upload?rubric=${
+              tab==="images"?"Photos":tab==="videos"?"Vidéos":tab==="audio"?"Audio":tab==="documents"?"Documents":"Photos"
+            }`}
             className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-center hover:bg-white/20">
             ➕ Ajouter des médias
           </Link>
@@ -358,25 +364,25 @@ export default function GaleriePage() {
 
       {/* Barre d'actions sélection */}
       {selectedPublicIds.size > 0 && (
-        <div className="mt-3 mb-4 rounded-xl bg-black/80 border border-white/20 p-3 shadow-lg">
-          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="mt-3 mb-4 rounded-xl border border-white/20 bg-black/80 p-3 shadow-lg">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <div className="text-sm text-white/90">
               {selectedPublicIds.size} élément{selectedPublicIds.size > 1 ? "s" : ""} sélectionné{selectedPublicIds.size > 1 ? "s" : ""}
             </div>
-            <div className="flex gap-2 flex-wrap">
-              <button onClick={downloadSelected} className="px-3 py-2 rounded bg-blue-500 text-black hover:bg-blue-400">
+            <div className="flex flex-wrap gap-2">
+              <button onClick={downloadSelected} className="rounded bg-blue-500 px-3 py-2 text-black hover:bg-blue-400">
                 Télécharger sélection
               </button>
-              <button onClick={doDelete} className="px-3 py-2 rounded bg-red-500 text-black hover:bg-red-400">
+              <button onClick={doDelete} className="rounded bg-red-500 px-3 py-2 text-black hover:bg-red-400">
                 Supprimer
               </button>
               <input value={moveFolder} onChange={e=>setMoveFolder(e.target.value)}
                 placeholder="Dossier cible (ex: famille/Photos/2025)"
                 className="rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none" />
-              <button onClick={doMove} className="px-3 py-2 rounded bg-yellow-500 text-black hover:bg-yellow-400">
+              <button onClick={doMove} className="rounded bg-yellow-500 px-3 py-2 text-black hover:bg-yellow-400">
                 Déplacer
               </button>
-              <button onClick={clearSel} className="px-3 py-2 rounded border border-white/30 hover:bg-white/10">
+              <button onClick={clearSel} className="rounded border border-white/30 px-3 py-2 hover:bg-white/10">
                 Annuler
               </button>
             </div>
@@ -386,19 +392,21 @@ export default function GaleriePage() {
 
       {/* Grille */}
       {loading ? (
-        <p className="text-white/70 mt-6">Chargement…</p>
+        <p className="mt-6 text-white/70">Chargement…</p>
       ) : items.length === 0 ? (
-        <div className="text-white/80 mt-6"><p>Aucun élément.</p></div>
+        <div className="mt-6 text-white/80"><p>Aucun élément.</p></div>
       ) : (
-        <div className="grid gap-4 grid-cols-2 lg:grid-cols-3 mt-4">
+        <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-3">
           {items.map(m => {
-            const isImg = m.kind==="image";
-            const isVid = m.kind==="video";
-            const isDoc = m.kind==="document";
+            const isImg   = m.kind==="image";
+            const isVid   = m.kind==="video";
+            const isAudio = m.kind==="audio";
+            const isDoc   = m.kind==="document";
             const ext = (m.format || "").toLowerCase();
+
             return (
-              <div key={m.id} className="relative overflow-hidden rounded-lg border border-white/20 group">
-                <label className="absolute top-2 left-2 z-10 inline-flex items-center gap-2 bg-black/50 rounded px-2 py-1 text-xs">
+              <div key={m.id} className="group relative overflow-hidden rounded-lg border border-white/20">
+                <label className="absolute left-2 top-2 z-10 inline-flex items-center gap-2 rounded bg-black/50 px-2 py-1 text-xs">
                   <input
                     type="checkbox"
                     checked={selectedPublicIds.has(m.public_id)}
@@ -406,28 +414,37 @@ export default function GaleriePage() {
                   />
                   Sélection
                 </label>
+
                 <div className="aspect-video">
                   {isImg ? (
                     <Image
                       src={m.thumb ?? m.url}
                       alt={m.title}
                       width={800} height={600}
-                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105 cursor-zoom-in"
+                      className="h-full w-full cursor-zoom-in object-cover transition-transform duration-300 group-hover:scale-105"
                       onClick={()=>openLightboxFor(m.id)}
                       unoptimized
                     />
                   ) : isVid ? (
                     isYouTube(m.url) ? (
-                      <iframe src={m.url.replace("watch?v=", "embed/")} className="w-full h-full"
+                      <iframe src={m.url.replace("watch?v=", "embed/")} className="h-full w-full"
                               allow="autoplay; encrypted-media" allowFullScreen />
                     ) : (
-                      <video src={m.url} className="w-full h-full object-cover cursor-zoom-in" preload="metadata" muted playsInline
-                             onClick={()=>openLightboxFor(m.id)} />
+                      <video src={m.url} className="h-full w-full cursor-zoom-in object-cover"
+                             preload="metadata" muted playsInline onClick={()=>openLightboxFor(m.id)} />
                     )
+                  ) : isAudio ? (
+                    <button
+                      onClick={()=>openLightboxFor(m.id)}
+                      className="grid h-full w-full place-items-center bg-white/5 text-white/90"
+                      title="Écouter"
+                    >
+                      <div className="text-base sm:text-lg">🎵 {m.title || (m.public_id.split("/").pop() || "Audio")}</div>
+                    </button>
                   ) : isDoc ? (
                     <button
                       onClick={()=>openLightboxFor(m.id)}
-                      className="w-full h-full grid place-items-center bg-white/5 text-white/90"
+                      className="grid h-full w-full place-items-center bg-white/5 text-white/90"
                       title="Ouvrir"
                     >
                       <div className="text-base sm:text-lg">
@@ -436,12 +453,13 @@ export default function GaleriePage() {
                     </button>
                   ) : null}
                 </div>
-                {/* action rapide DL doc */}
-                {isDoc && (
-                  <div className="absolute top-2 right-2 z-10">
+
+                {/* action rapide DL audio/doc */}
+                {(isDoc || isAudio) && (
+                  <div className="absolute right-2 top-2 z-10">
                     <a
                       href={downloadUrl(m)}
-                      className="rounded bg-white/80 text-black px-2 py-1 text-xs hover:bg-white"
+                      className="rounded bg-white/80 px-2 py-1 text-xs text-black hover:bg-white"
                       title="Télécharger"
                       target="_blank" rel="noopener noreferrer"
                     >
@@ -455,65 +473,64 @@ export default function GaleriePage() {
         </div>
       )}
 
-      {/* Lightbox (images/vidéos/documents) */}
+      {/* Lightbox (images/vidéos/audio/documents) */}
       {lbOpen && viewable.length>0 && (
-        <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-50 p-4"
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4"
              onClick={()=>setLbOpen(false)} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
-          <div className="relative max-w-6xl w-full max-h-[90vh]" onClick={(e)=>e.stopPropagation()}>
-            <div className="absolute top-2 right-2 z-10 flex gap-2 items-center">
+          <div className="relative w-full max-w-6xl max-h-[90vh]" onClick={(e)=>e.stopPropagation()}>
+            <div className="absolute right-2 top-2 z-10 flex items-center gap-2">
               <div className="rounded-full bg-black/60 px-3 py-1 text-sm">{lbIndex+1} / {viewable.length}</div>
-              <a
-                href={downloadUrl(viewable[lbIndex])}
-                target="_blank" rel="noopener noreferrer"
-                className="rounded bg-white/80 text-black px-3 py-1 text-sm hover:bg-white"
-              >
+              <a href={downloadUrl(viewable[lbIndex])} target="_blank" rel="noopener noreferrer"
+                 className="rounded bg-white/80 px-3 py-1 text-sm text-black hover:bg-white">
                 Télécharger
               </a>
-              <a
-                href={openUrl(viewable[lbIndex])}
-                target="_blank" rel="noopener noreferrer"
-                className="rounded bg-white/80 text-black px-3 py-1 text-sm hover:bg-white"
-              >
+              <a href={openUrl(viewable[lbIndex])} target="_blank" rel="noopener noreferrer"
+                 className="rounded bg-white/80 px-3 py-1 text-sm text-black hover:bg-white">
                 Ouvrir
               </a>
             </div>
             <button onClick={()=>setLbOpen(false)}
-                    className="absolute top-2 left-2 z-10 rounded-full border border-white/30 px-3 py-1 bg-black/40">✕</button>
+                    className="absolute left-2 top-2 z-10 rounded-full border border-white/30 bg-black/40 px-3 py-1">✕</button>
             <button onClick={()=>setLbIndex(i=>(i-1+viewable.length)%viewable.length)}
-                    className="absolute left-2 top-1/2 -translate-y-1/2 z-10 h-12 w-12 rounded-full bg-black/60 hover:bg-black/80 grid place-items-center text-2xl">←</button>
+                    className="absolute left-2 top-1/2 z-10 h-12 w-12 -translate-y-1/2 grid place-items-center rounded-full bg-black/60 text-2xl hover:bg-black/80">←</button>
             <button onClick={()=>setLbIndex(i=>(i+1)%viewable.length)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 z-10 h-12 w-12 rounded-full bg-black/60 hover:bg-black/80 grid place-items-center text-2xl">→</button>
+                    className="absolute right-2 top-1/2 z-10 h-12 w-12 -translate-y-1/2 grid place-items-center rounded-full bg-black/60 text-2xl hover:bg-black/80">→</button>
 
-            <div className="bg-black/40 rounded-lg overflow-hidden border border-white/20">
+            <div className="overflow-hidden rounded-lg border border-white/20 bg-black/40">
               {(() => {
                 const cur = viewable[lbIndex];
                 const ext = (cur.format || "").toLowerCase();
 
                 if (cur.kind === "image") {
-                  return <Image src={cur.url} alt={cur.title} width={1200} height={800} className="max-h-[80vh] w-full object-contain" unoptimized />;
+                  return <Image src={cur.url} alt={cur.title} width={1200} height={800} className="w-full max-h-[80vh] object-contain" unoptimized />;
                 }
                 if (isYouTube(cur.url)) {
-                  return <iframe src={cur.url.replace("watch?v=", "embed/")} className="w-full h-[80vh]" allow="autoplay; encrypted-media" allowFullScreen />;
+                  return <iframe src={cur.url.replace("watch?v=", "embed/")} className="h-[80vh] w-full" allow="autoplay; encrypted-media" allowFullScreen />;
                 }
                 if (cur.kind === "video") {
-                  return <video src={cur.url} className="max-h-[80vh] w-full object-contain" controls autoPlay playsInline />;
+                  return <video src={cur.url} className="w-full max-h-[80vh] object-contain" controls autoPlay playsInline />;
+                }
+                if (cur.kind === "audio") {
+                  const src = openUrl(cur, ext || "mp3");
+                  return (
+                    <div className="grid h-[30vh] w-full place-items-center bg-black">
+                      <audio src={src} controls autoPlay className="w-[90%]" />
+                    </div>
+                  );
                 }
 
                 // Documents :
                 if (ext === "pdf") {
-                  // viewer natif via ton proxy (compatible Range en prod)
                   const pdfUrl = apiFile(cur.public_id, { format: "pdf", dl: 0, filename: sanitizeName((cur.title || "document") + ".pdf") });
-                  return <iframe src={pdfUrl} className="w-full h-[80vh] bg-white" title={cur.title || "PDF"} />;
+                  return <iframe src={pdfUrl} className="h-[80vh] w-full bg-white" title={cur.title || "PDF"} />;
                 }
                 if (officeExts.includes(ext)) {
-                  // Office Web Viewer en lui donnant l’URL publique de ton API (inline)
                   const fileUrl = openUrl(cur, ext);
                   const officeEmbed = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(fileUrl)}`;
-                  return <iframe src={officeEmbed} className="w-full h-[80vh] bg-white" title={cur.title || "Document"} />;
+                  return <iframe src={officeEmbed} className="h-[80vh] w-full bg-white" title={cur.title || "Document"} />;
                 }
-                // Autres (txt/csv/zip...) : on tente iframe direct
                 const genericUrl = openUrl(cur, ext);
-                return <iframe src={genericUrl} className="w-full h-[80vh] bg-white" title={cur.title || "Fichier"} />;
+                return <iframe src={genericUrl} className="h-[80vh] w-full bg-white" title={cur.title || "Fichier"} />;
               })()}
             </div>
           </div>
