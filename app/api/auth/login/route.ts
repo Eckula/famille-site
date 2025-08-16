@@ -1,21 +1,31 @@
 // app/api/auth/login/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { createSession } from "@/lib/auth";
+import { signInWithPassword } from "@/lib/auth";
 import type { Role } from "@/lib/rbac";
 
+export const runtime = "nodejs";
+export const revalidate = 0;
+
 export async function POST(req: NextRequest) {
-  const { password } = await req.json().catch(() => ({ password: "" }));
-  const adminPw  = process.env.ADMIN_PASSWORD  || "";
-  const editorPw = process.env.EDITOR_PASSWORD || "";
-  const viewerPw = process.env.VIEWER_PASSWORD || "";
+  const { password, maxAgeDays = 7 } = await req.json().catch(() => ({}));
 
-  let role: Role | null = null;
-  if (password === adminPw) role = "admin";
-  else if (password === editorPw) role = "editor";
-  else if (password === viewerPw) role = "viewer";
+  if (!password) {
+    return NextResponse.json({ ok: false, message: "Mot de passe requis" }, { status: 400 });
+  }
+  if (!process.env.ADMIN_PASSWORD) {
+    return NextResponse.json(
+      { ok: false, message: "ADMIN_PASSWORD non configuré côté serveur." },
+      { status: 500 }
+    );
+  }
+  if (!process.env.ADMIN_JWT_SECRET) {
+    return NextResponse.json(
+      { ok: false, message: "ADMIN_JWT_SECRET non configuré côté serveur." },
+      { status: 500 }
+    );
+  }
 
-  if (!role) return NextResponse.json({ ok:false, error:"Mot de passe invalide." }, { status: 401 });
-
-  await createSession(role);
-  return NextResponse.json({ ok:true, role });
+  const r = await signInWithPassword(password, maxAgeDays);
+  if (!r.ok) return NextResponse.json({ ok: false, message: r.message || "Mot de passe invalide" }, { status: 401 });
+  return NextResponse.json({ ok: true, role: r.role as Role });
 }

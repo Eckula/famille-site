@@ -1,10 +1,11 @@
 // app/api/me/route.ts
 import { NextResponse } from "next/server";
-import { getSession } from "@/lib/auth";
+import { getMe } from "@/lib/auth";
+
+export const runtime = "nodejs";
+export const revalidate = 0;
+
 export async function GET() {
-  const s = await getSession();
-  if (!s) return NextResponse.json(null);
-  return NextResponse.json({ role: s.role });
+  const me = await getMe();
+  return NextResponse.json(me);
 }
-
-

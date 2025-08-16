@@ -14,20 +14,20 @@ export type Me =
   | { role: "guest" }
   | { role: Role; sub: string; exp: number };
 
-function days(n: number) {
-  return 60 * 60 * 24 * n;
+function seconds(days: number) {
+  return 60 * 60 * 24 * days;
 }
 
 async function setCookie(token: string, maxAgeDays: number) {
-  // Next 15: cookies() -> Promise<ReadonlyRequestCookies> dans les actions
   const store = await cookies();
-  // cast "any" car le type Readonly ne déclare pas set/delete alors que l'impl le permet ici
+  // ⚠️ clé : secure seulement en prod (sinon cookie non posé sur http://localhost)
+  const secure = process.env.NODE_ENV === "production";
   (store as any).set(COOKIE_NAME, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: true,
+    secure,
     path: "/",
-    maxAge: days(maxAgeDays),
+    maxAge: seconds(maxAgeDays), // en secondes
   });
 }
 
@@ -38,19 +38,18 @@ export async function clearAuthCookie() {
 
 export async function signInWithPassword(pw: string, maxAgeDays = 7): Promise<{ ok: boolean; role?: Role; message?: string }> {
   let role: Role | undefined;
-
   if (ADMIN_PW && pw === ADMIN_PW) role = "admin";
   else if (EDITOR_PW && pw === EDITOR_PW) role = "editor";
   else if (VIEWER_PW && pw === VIEWER_PW) role = "viewer";
 
   if (!role) return { ok: false, message: "Mot de passe invalide" };
 
-  const exp = Math.floor(Date.now() / 1000) + days(maxAgeDays);
+  const expAt = Math.floor(Date.now() / 1000) + seconds(maxAgeDays);
   const token = await new SignJWT({ role })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(role)
     .setIssuedAt()
-    .setExpirationTime(exp)
+    .setExpirationTime(expAt)
     .sign(SECRET);
 
   await setCookie(token, maxAgeDays);
@@ -79,8 +78,7 @@ export async function requireAdmin() {
   return me;
 }
 
-
-// --- Compatibilité avec les anciennes routes ---
+// --- Compat (anciens imports dans tes routes) ---
 export { signInWithPassword as createSession };
 export { clearAuthCookie as clearSession };
 export { getMe as getSession };
