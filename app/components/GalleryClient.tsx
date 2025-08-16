@@ -36,10 +36,11 @@ function inferKind(it: GalleryItem): "image" | "video" | "audio" | "document" {
 export default function GalleryClient({ items = [] as GalleryItem[] }) {
   const router   = useRouter();
   const pathname = usePathname();
-  const sp       = useSearchParams();
+  const sp       = useSearchParams(); // peut être null selon les types de ta version
 
-  const tab = (sp.get("tab") || "tout").toLowerCase();
-  const q   = (sp.get("q") || "").trim();
+  // ✅ null-safe
+  const tab = (sp?.get("tab") ?? "tout").toLowerCase();
+  const q   = (sp?.get("q")   ?? "").trim();
 
   // Sécurité UX: /galerie?tab=documents → si pas connecté, redirige vers /admin
   useEffect(() => {
@@ -48,7 +49,8 @@ export default function GalleryClient({ items = [] as GalleryItem[] }) {
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => {
         if (!j?.role) {
-          const next = `${pathname}?${sp.toString()}`;
+          const params = sp ? sp.toString() : "";
+          const next = `${pathname}?${params}`;
           router.replace(`/admin?next=${encodeURIComponent(next)}`);
         }
       })
@@ -60,7 +62,7 @@ export default function GalleryClient({ items = [] as GalleryItem[] }) {
     { key: "tout",      label: "Tout" },
     { key: "photos",    label: "Photos" },
     { key: "videos",    label: "Vidéos" },
-    { key: "audio",     label: "Audio" },      // 👈 NOUVEL ONGLET
+    { key: "audio",     label: "Audio" },      // 👈
     { key: "documents", label: "Documents" },
   ];
 
@@ -69,7 +71,7 @@ export default function GalleryClient({ items = [] as GalleryItem[] }) {
       const k = inferKind(it);
       if (tab === "photos")    return k === "image";
       if (tab === "videos")    return k === "video";
-      if (tab === "audio")     return k === "audio";      // 👈 mp3 & co ici
+      if (tab === "audio")     return k === "audio";
       if (tab === "documents") return k === "document";
       return true;
     });
@@ -79,19 +81,20 @@ export default function GalleryClient({ items = [] as GalleryItem[] }) {
   }, [items, tab, q]);
 
   function setTab(next: string) {
-    const p = new URLSearchParams(sp.toString());
-    p.set("tab", next);
-    router.replace(`${pathname}?${p.toString()}`, { scroll: false });
+    const params = new URLSearchParams(sp?.toString() ?? "");
+    params.set("tab", next);
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   }
+
   function setQuery(next: string) {
-    const p = new URLSearchParams(sp.toString());
-    if (next) p.set("q", next); else p.delete("q");
-    router.replace(`${pathname}?${p.toString()}`, { scroll: false });
+    const params = new URLSearchParams(sp?.toString() ?? "");
+    if (next) params.set("q", next); else params.delete("q");
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   }
 
   return (
     <section>
-      {/* Onglets + recherche */}
+      {/* Tabs + recherche */}
       <div className="mb-2 flex flex-wrap items-center gap-3 text-white">
         {tabs.map((t) => (
           <button
@@ -115,15 +118,15 @@ export default function GalleryClient({ items = [] as GalleryItem[] }) {
       {/* Grille */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
         {filtered.map((it) => {
-          const kind = inferKind(it);
+          const k = inferKind(it);
           return (
             <article key={it.id} className="overflow-hidden rounded-lg border border-white/15 bg-white/5">
               <div className="aspect-video bg-black/30">
-                {kind === "image" ? (
+                {k === "image" ? (
                   <img src={it.thumb ?? it.url} alt={it.title} className="h-full w-full object-cover" loading="lazy" />
-                ) : kind === "video" ? (
+                ) : k === "video" ? (
                   <video src={it.url} className="h-full w-full object-cover" controls preload="metadata" />
-                ) : kind === "audio" ? (
+                ) : k === "audio" ? (
                   <div className="flex h-full items-center justify-center p-4 text-white/90">🎵 {it.title || "Audio"}</div>
                 ) : (
                   <div className="flex h-full items-center justify-center p-4 text-white/90">📄 {it.title || "Document"}</div>
@@ -132,7 +135,9 @@ export default function GalleryClient({ items = [] as GalleryItem[] }) {
               <div className="p-3">
                 <div className="truncate font-medium">{it.title}</div>
                 {it.createdAt && (
-                  <div className="text-xs text-white/70">{new Date(it.createdAt).toLocaleDateString("fr-FR")}</div>
+                  <div className="text-xs text-white/70">
+                    {new Date(it.createdAt).toLocaleDateString("fr-FR")}
+                  </div>
                 )}
               </div>
             </article>
@@ -140,7 +145,9 @@ export default function GalleryClient({ items = [] as GalleryItem[] }) {
         })}
       </div>
 
-      {filtered.length === 0 && <div className="mt-6 text-center text-white/70">Aucun élément.</div>}
+      {filtered.length === 0 && (
+        <div className="mt-6 text-center text-white/70">Aucun élément.</div>
+      )}
     </section>
   );
 }

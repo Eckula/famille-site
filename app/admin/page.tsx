@@ -53,6 +53,7 @@ export default function AdminPage() {
   return (
     <div className="mx-auto max-w-3xl p-4 text-white">
       <h1 className="mb-4 text-2xl font-semibold">Espace Admin</h1>
+	   <p>Espace réservé aux membres autorisés.</p>
       {!me ? (
         <form onSubmit={login} className="space-y-3 rounded-2xl border border-white/20 bg-black/40 p-4 backdrop-blur">
           <label className="block">
