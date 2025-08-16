@@ -1,8 +1,8 @@
 // app/layout.js
 import "./globals.css";
 import ThemeProvider from "./components/ThemeProvider";
-import ThemeToggle from "./components/ThemeToggle";
 import Nav from "./components/Nav";
+import WeatherWidget from "./components/WeatherWidget";
 
 export const metadata = {
   title: "Famille Merenge — Accueil",
@@ -31,9 +31,9 @@ export default function RootLayout({ children }) {
           {/* Overlay pour lisibilité */}
           <div className="fixed inset-0 -z-10 bg-black/40" />
 
-          {/* Bouton thème */}
+          {/* Widget météo — même position que l'ancien bouton thème */}
           <div className="fixed right-4 top-4 z-50">
-            <ThemeToggle />
+            <WeatherWidget />
           </div>
 
           {/* Barre de navigation */}
