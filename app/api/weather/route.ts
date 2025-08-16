@@ -1,14 +1,28 @@
-import { NextResponse } from "next/server";
+// app/api/weather/route.ts
+import { NextRequest, NextResponse } from "next/server";
 
-export async function GET(req) {
+export const runtime = "edge"; // nécessaire pour recevoir les en-têtes Geo de Vercel
+
+export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const lat = searchParams.get("lat");
-  const lon = searchParams.get("lon");
-  const city = searchParams.get("city") || process.env.DEFAULT_CITY || "Lyon";
 
   const apiKey = process.env.OPENWEATHER_API_KEY;
   if (!apiKey) {
     return NextResponse.json({ error: "Missing OPENWEATHER_API_KEY" }, { status: 500 });
+  }
+
+  // 1) Priorité aux paramètres explicites (GPS du navigateur)
+  let lat = searchParams.get("lat") ?? undefined;
+  let lon = searchParams.get("lon") ?? undefined;
+  let city = searchParams.get("city") ?? undefined;
+
+  // 2) Sinon, tenter la géo IP Vercel (aucune popup)
+  if (!lat || !lon) {
+    lat = req.headers.get("x-vercel-ip-latitude") ?? undefined;
+    lon = req.headers.get("x-vercel-ip-longitude") ?? undefined;
+  }
+  if (!city) {
+    city = req.headers.get("x-vercel-ip-city") ?? process.env.DEFAULT_CITY ?? "Lyon";
   }
 
   const qs = new URLSearchParams({
@@ -20,13 +34,13 @@ export async function GET(req) {
   if (lat && lon) {
     qs.set("lat", lat);
     qs.set("lon", lon);
-  } else {
+  } else if (city) {
     qs.set("q", city);
   }
 
   const url = `https://api.openweathermap.org/data/2.5/weather?${qs.toString()}`;
+  const r = await fetch(url, { next: { revalidate: 600 } }); // 10 min de cache côté edge
 
-  const r = await fetch(url, { next: { revalidate: 600 } }); // 10 min côté edge
   if (!r.ok) {
     const text = await r.text().catch(() => "");
     return NextResponse.json({ error: "Upstream error", detail: text }, { status: r.status });
@@ -34,7 +48,6 @@ export async function GET(req) {
 
   const d = await r.json();
 
-  // Réponse simplifiée pour le client
   const payload = {
     name: d?.name,
     country: d?.sys?.country,
