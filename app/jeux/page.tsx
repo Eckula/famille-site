@@ -13,7 +13,7 @@ export default function JeuxPage() {
           className="rounded-xl border border-white/25 bg-black/40 p-4 hover:bg-white/10 transition"
         >
           <div className="text-lg font-medium">Snake</div>
-          <div className="text-white/70 text-sm">Joue avec les flèches ou les boutons tactiles.</div>
+          <div className="text-white/70 text-sm">Flèches ou boutons tactiles.</div>
         </Link>
       </div>
     </main>
