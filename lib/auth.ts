@@ -3,40 +3,62 @@ import { cookies } from "next/headers";
 import { SignJWT, jwtVerify } from "jose";
 
 const COOKIE_NAME = "famille_admin_token";
-const SECRET = new TextEncoder().encode(process.env.ADMIN_JWT_SECRET || "dev-secret");
+
+// ⚠️ En production, ne garde pas de fallback "dev-secret"
+const SECRET_BYTES = (() => {
+  const s = process.env.ADMIN_JWT_SECRET;
+  if (!s) throw new Error("ADMIN_JWT_SECRET manquant");
+  return new TextEncoder().encode(s);
+})();
 
 const ADMIN_PW  = process.env.ADMIN_PASSWORD  || "";
 const EDITOR_PW = process.env.EDITOR_PASSWORD || "";
-const VIEWER_PW = process.env.VIEWER_PASSWORD || "" as string;
+const VIEWER_PW = process.env.VIEWER_PASSWORD || "";
 
 export type Role = "admin" | "editor" | "viewer";
 export type Me =
   | { role: "guest" }
   | { role: Role; sub: string; exp: number };
 
-function seconds(days: number) {
-  return 60 * 60 * 24 * days;
+const SEC_PER_DAY = 60 * 60 * 24;
+
+function cookieBase() {
+  return {
+    name: COOKIE_NAME,
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: process.env.NODE_ENV === "production",
+    path: "/", // très important pour que la suppression fonctionne partout
+  };
 }
 
-async function setCookie(token: string, maxAgeDays: number) {
-  const store = await cookies();
-  // ⚠️ clé : secure seulement en prod (sinon cookie non posé sur http://localhost)
-  const secure = process.env.NODE_ENV === "production";
-  (store as any).set(COOKIE_NAME, token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure,
-    path: "/",
-    maxAge: seconds(maxAgeDays), // en secondes
+function setCookie(token: string, maxAgeDays: number) {
+  const c = cookies(); // <- pas de await
+  c.set({
+    ...cookieBase(),
+    value: token,
+    maxAge: SEC_PER_DAY * maxAgeDays,
   });
 }
 
-export async function clearAuthCookie() {
-  const store = await cookies();
-  (store as any).delete?.(COOKIE_NAME);
+export function clearAuthCookie() {
+  const c = cookies(); // <- pas de await
+
+  // 1) Réécrire le cookie avec une date expirée (couvre Safari/Edge)
+  c.set({
+    ...cookieBase(),
+    value: "",
+    expires: new Date(0),
+  });
+
+  // 2) Et on delete (Next 13/14/15)
+  c.delete(COOKIE_NAME);
 }
 
-export async function signInWithPassword(pw: string, maxAgeDays = 7): Promise<{ ok: boolean; role?: Role; message?: string }> {
+export async function signInWithPassword(
+  pw: string,
+  maxAgeDays = 7
+): Promise<{ ok: boolean; role?: Role; message?: string }> {
   let role: Role | undefined;
   if (ADMIN_PW && pw === ADMIN_PW) role = "admin";
   else if (EDITOR_PW && pw === EDITOR_PW) role = "editor";
@@ -44,28 +66,28 @@ export async function signInWithPassword(pw: string, maxAgeDays = 7): Promise<{ 
 
   if (!role) return { ok: false, message: "Mot de passe invalide" };
 
-  const expAt = Math.floor(Date.now() / 1000) + seconds(maxAgeDays);
+  const expAt = Math.floor(Date.now() / 1000) + SEC_PER_DAY * maxAgeDays;
+
   const token = await new SignJWT({ role })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(role)
     .setIssuedAt()
     .setExpirationTime(expAt)
-    .sign(SECRET);
+    .sign(SECRET_BYTES);
 
-  await setCookie(token, maxAgeDays);
+  setCookie(token, maxAgeDays);
   return { ok: true, role };
 }
 
 export async function getMe(): Promise<Me> {
-  const store = await cookies();
-  const raw = (store as any).get?.(COOKIE_NAME)?.value as string | undefined;
+  const raw = cookies().get(COOKIE_NAME)?.value as string | undefined;
   if (!raw) return { role: "guest" };
   try {
-    const { payload } = await jwtVerify(raw, SECRET);
-    const role = (payload.role as Role) || "viewer";
-    const exp = (payload.exp as number) || 0;
-    const sub = (payload.sub as string) || role;
-    if (Date.now() / 1000 > exp) return { role: "guest" };
+    const { payload } = await jwtVerify(raw, SECRET_BYTES);
+    const role = (payload as any).role as Role | undefined;
+    const exp = (payload as any).exp as number | undefined;
+    const sub = ((payload as any).sub as string | undefined) ?? role ?? "viewer";
+    if (!role || !exp || Date.now() / 1000 > exp) return { role: "guest" };
     return { role, sub, exp };
   } catch {
     return { role: "guest" };
@@ -78,7 +100,7 @@ export async function requireAdmin() {
   return me;
 }
 
-// --- Compat (anciens imports dans tes routes) ---
+// --- Compat (anciens imports) ---
 export { signInWithPassword as createSession };
 export { clearAuthCookie as clearSession };
 export { getMe as getSession };

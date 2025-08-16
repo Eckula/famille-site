@@ -2,11 +2,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
 
+// ⚠️ doit être identique à lib/auth.ts
+const COOKIE_NAME = "famille_admin_token";
 const SECRET = new TextEncoder().encode(process.env.ADMIN_JWT_SECRET || "dev-secret");
 
-// téléchargement public si pas de VIEWER_PASSWORD
+// Téléchargements publics s’il n’y a PAS de VIEWER_PASSWORD
 const PUBLIC_DOWNLOADS = !process.env.VIEWER_PASSWORD;
 
+// APIs protégées (et /api/media/stream si non public)
 const PROTECTED_API_PREFIXES = [
   ...(!PUBLIC_DOWNLOADS ? ["/api/media/stream"] : []),
   "/api/cloudinary/sign-upload",
@@ -15,9 +18,10 @@ const PROTECTED_API_PREFIXES = [
 ];
 
 async function hasValidSession(req: NextRequest) {
-  const token = req.cookies.get("session")?.value;
+  const token = req.cookies.get(COOKIE_NAME)?.value;
   if (!token) return false;
   try {
+    // Vérifie signature + iat/exp
     await jwtVerify(token, SECRET);
     return true;
   } catch {
@@ -25,32 +29,31 @@ async function hasValidSession(req: NextRequest) {
   }
 }
 
-export async function middleware(req: NextRequest) {
-  const { pathname, searchParams } = req.nextUrl;
+function redirectToLoginWithNext(req: NextRequest) {
+  const next = req.nextUrl.pathname + (req.nextUrl.search || "");
+  const url = new URL("/admin", req.url);
+  url.searchParams.set("next", next);
+  return NextResponse.redirect(url);
+}
 
-  // 1) /documents : privé → redirige vers /admin si pas connecté
+export async function middleware(req: NextRequest) {
+  const { pathname } = req.nextUrl;
+
+  // 1) /documents : privé (si tu as une page /documents)
   if (pathname.startsWith("/documents")) {
-    if (!(await hasValidSession(req))) {
-      const url = new URL("/admin", req.url);
-      url.searchParams.set("next", pathname + (req.nextUrl.search || ""));
-      return NextResponse.redirect(url);
-    }
+    if (!(await hasValidSession(req))) return redirectToLoginWithNext(req);
     return NextResponse.next();
   }
 
-  // 2) /galerie?tab=documents : également privé
-  if (pathname.startsWith("/galerie")) {
-    const tab = searchParams.get("tab");
+  // 2) /galerie?tab=documents : privé
+  if (pathname === "/galerie") {
+    const tab = req.nextUrl.searchParams.get("tab");
     if (tab && tab.toLowerCase() === "documents") {
-      if (!(await hasValidSession(req))) {
-        const url = new URL("/admin", req.url);
-        url.searchParams.set("next", pathname + (req.nextUrl.search || ""));
-        return NextResponse.redirect(url);
-      }
+      if (!(await hasValidSession(req))) return redirectToLoginWithNext(req);
     }
   }
 
-  // 3) APIs protégées (upload, delete, rename… et stream si non public)
+  // 3) APIs protégées (upload, delete, rename… + stream si non public)
   if (PROTECTED_API_PREFIXES.some((p) => pathname.startsWith(p))) {
     if (!(await hasValidSession(req))) {
       return NextResponse.json({ error: "Non autorisé" }, { status: 401 });
@@ -61,6 +64,7 @@ export async function middleware(req: NextRequest) {
   return NextResponse.next();
 }
 
+// Limite la portée de la middleware aux routes utiles
 export const config = {
-  matcher: ["/documents/:path*", "/galerie/:path*", "/api/:path*"],
+  matcher: ["/documents/:path*", "/galerie", "/api/:path*"],
 };
