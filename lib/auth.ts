@@ -78,3 +78,9 @@ export async function requireAdmin() {
   if (me.role !== "admin") throw new Error("unauthorized");
   return me;
 }
+
+
+// --- Compatibilité avec les anciennes routes ---
+export { signInWithPassword as createSession };
+export { clearAuthCookie as clearSession };
+export { getMe as getSession };
