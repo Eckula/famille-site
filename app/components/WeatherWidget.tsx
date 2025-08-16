@@ -1,22 +1,50 @@
-// app/components/WeatherWidget.jsx
+// app/components/WeatherWidget.tsx
 
 "use client";
+/* eslint-disable @next/next/no-img-element */
 
 import { useEffect, useState } from "react";
 
-export default function WeatherWidget({ fallbackCity = "Lyon", className = "" }) {
-  const [coords, setCoords] = useState(null);
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState(null);
+type Coords = { lat: number; lon: number };
+
+type WeatherData = {
+  name: string;
+  country?: string;
+  temp: number;            // °C
+  feels_like?: number;     // °C
+  description?: string;    // ex: "ciel dégagé"
+  icon?: string;           // ex: "10d"
+  wind_kmh?: number | null;
+  dt?: number;
+  timezone?: number;
+};
+
+function cx(...xs: Array<string | false | null | undefined>) {
+  return xs.filter(Boolean).join(" ");
+}
+
+export default function WeatherWidget({
+  fallbackCity = "Lyon",
+  className = "",
+}: {
+  fallbackCity?: string;
+  className?: string;
+}) {
+  // ✅ on typede explicitement les states
+  const [coords, setCoords] = useState<Coords | null>(null);
+  const [data, setData] = useState<WeatherData | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [err, setErr] = useState<string | null>(null);
 
   // Géolocalisation (avec timeout)
   useEffect(() => {
     let cancelled = false;
+
     if (!navigator.geolocation) {
       setCoords(null);
       return;
     }
+
     const t = window.setTimeout(() => {
       if (!cancelled) setCoords(null);
     }, 7000);
@@ -25,6 +53,7 @@ export default function WeatherWidget({ fallbackCity = "Lyon", className = "" })
       (pos) => {
         if (cancelled) return;
         window.clearTimeout(t);
+        // ✅ setCoords reçoit bien un objet de type Coords
         setCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude });
       },
       () => {
@@ -55,13 +84,17 @@ export default function WeatherWidget({ fallbackCity = "Lyon", className = "" })
     fetch(`/api/weather?${params}`, { signal: controller.signal, cache: "no-store" })
       .then(async (r) => {
         if (!r.ok) throw new Error("Erreur réseau");
-        return r.json();
+        return (await r.json()) as WeatherData;
       })
       .then((json) => {
         if (!cancelled) setData(json);
       })
-      .catch((e) => !cancelled && setErr(e?.message || "Impossible de charger la météo"))
-      .finally(() => !cancelled && setLoading(false));
+      .catch((e: unknown) => {
+        if (!cancelled) setErr((e as Error)?.message || "Impossible de charger la météo");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
 
     return () => {
       cancelled = true;
@@ -74,14 +107,14 @@ export default function WeatherWidget({ fallbackCity = "Lyon", className = "" })
   const iconUrl = data?.icon ? `https://openweathermap.org/img/wn/${data.icon}.png` : null;
 
   return (
-    <div className={`group relative ${className}`} aria-live="polite">
+    <div className={cx("group relative", className)} aria-live="polite">
       {/* pastille compacte */}
       <div
-        className={
-          "inline-flex items-center gap-2 rounded-full border border-white/30 " +
-          "bg-black/30 px-3 py-1.5 text-white backdrop-blur hover:bg-white/10 " +
-          "transition select-none"
-        }
+        className={cx(
+          "inline-flex items-center gap-2 rounded-full",
+          "border border-white/30 bg-black/30 px-3 py-1.5 text-white backdrop-blur",
+          "hover:bg-white/10 transition select-none"
+        )}
       >
         {loading ? (
           <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-white/40 border-t-transparent" />
@@ -90,24 +123,23 @@ export default function WeatherWidget({ fallbackCity = "Lyon", className = "" })
         ) : (
           <span aria-hidden>⛅</span>
         )}
+
         <span className="tabular-nums">{Number.isFinite(temp) ? temp : "—"}°</span>
 
-        {/* ── CHANGEMENT : la ville n'est plus masquée en mobile ── */}
-        <span
-          className="inline max-w-[40vw] truncate whitespace-nowrap sm:max-w-none"
-          title={city}
-        >
+        {/* Ville toujours visible, tronquée sur tout petits écrans */}
+        <span className="inline max-w-[40vw] truncate whitespace-nowrap sm:max-w-none" title={city}>
           {city}
         </span>
       </div>
 
       {/* panneau détaillé au survol/focus (desktop) */}
       <div
-        className={
-          "pointer-events-none absolute right-0 mt-2 w-64 rounded-2xl " +
-          "border border-white/25 bg-black/85 p-3 text-sm text-white shadow-lg backdrop-blur " +
-          "opacity-0 translate-y-1 transition group-hover:opacity-100 group-hover:translate-y-0"
-        }
+        className={cx(
+          "pointer-events-none absolute right-0 mt-2 w-64 rounded-2xl",
+          "border border-white/25 bg-black/85 p-3 text-sm text-white shadow-lg backdrop-blur",
+          "opacity-0 translate-y-1 transition",
+          "group-hover:opacity-100 group-hover:translate-y-0"
+        )}
         role="dialog"
       >
         {loading ? (
