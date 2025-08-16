@@ -3,56 +3,37 @@ import { cookies } from "next/headers";
 import { SignJWT, jwtVerify } from "jose";
 
 const COOKIE_NAME = "famille_admin_token";
-
-// ⚠️ En production, ne garde pas de fallback "dev-secret"
-const SECRET_BYTES = (() => {
-  const s = process.env.ADMIN_JWT_SECRET;
-  if (!s) throw new Error("ADMIN_JWT_SECRET manquant");
-  return new TextEncoder().encode(s);
-})();
+const SECRET = new TextEncoder().encode(process.env.ADMIN_JWT_SECRET || "dev-secret");
 
 const ADMIN_PW  = process.env.ADMIN_PASSWORD  || "";
 const EDITOR_PW = process.env.EDITOR_PASSWORD || "";
-const VIEWER_PW = process.env.VIEWER_PASSWORD || "";
+const VIEWER_PW = process.env.VIEWER_PASSWORD || "" as string;
 
 export type Role = "admin" | "editor" | "viewer";
 export type Me =
   | { role: "guest" }
   | { role: Role; sub: string; exp: number };
 
-const SEC_PER_DAY = 60 * 60 * 24;
+function seconds(days: number) {
+  return 60 * 60 * 24 * days;
+}
 
-function cookieBase() {
-  return {
-    name: COOKIE_NAME,
+/** Pose le cookie httpOnly côté serveur (typages Next variants ⇒ cast en any) */
+async function setCookie(token: string, maxAgeDays: number) {
+  const store = await cookies();
+  const secure = process.env.NODE_ENV === "production"; // en prod: Secure
+  (store as any).set(COOKIE_NAME, token, {
     httpOnly: true,
-    sameSite: "lax" as const,
-    secure: process.env.NODE_ENV === "production",
-    path: "/", // très important pour que la suppression fonctionne partout
-  };
-}
-
-function setCookie(token: string, maxAgeDays: number) {
-  const c = cookies(); // <- pas de await
-  c.set({
-    ...cookieBase(),
-    value: token,
-    maxAge: SEC_PER_DAY * maxAgeDays,
+    sameSite: "lax",
+    secure,
+    path: "/",
+    maxAge: seconds(maxAgeDays), // en secondes
   });
 }
 
-export function clearAuthCookie() {
-  const c = cookies(); // <- pas de await
-
-  // 1) Réécrire le cookie avec une date expirée (couvre Safari/Edge)
-  c.set({
-    ...cookieBase(),
-    value: "",
-    expires: new Date(0),
-  });
-
-  // 2) Et on delete (Next 13/14/15)
-  c.delete(COOKIE_NAME);
+export async function clearAuthCookie() {
+  const store = await cookies();
+  (store as any).delete?.(COOKIE_NAME);
 }
 
 export async function signInWithPassword(
@@ -66,29 +47,29 @@ export async function signInWithPassword(
 
   if (!role) return { ok: false, message: "Mot de passe invalide" };
 
-  const expAt = Math.floor(Date.now() / 1000) + SEC_PER_DAY * maxAgeDays;
-
+  const expAt = Math.floor(Date.now() / 1000) + seconds(maxAgeDays);
   const token = await new SignJWT({ role })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(role)
     .setIssuedAt()
     .setExpirationTime(expAt)
-    .sign(SECRET_BYTES);
+    .sign(SECRET);
 
-  setCookie(token, maxAgeDays);
+  await setCookie(token, maxAgeDays);
   return { ok: true, role };
 }
 
 export async function getMe(): Promise<Me> {
-  const raw = cookies().get(COOKIE_NAME)?.value as string | undefined;
+  const store = await cookies();
+  const raw = (store as any).get?.(COOKIE_NAME)?.value as string | undefined;
   if (!raw) return { role: "guest" };
   try {
-    const { payload } = await jwtVerify(raw, SECRET_BYTES);
-    const role = (payload as any).role as Role | undefined;
-    const exp = (payload as any).exp as number | undefined;
-    const sub = ((payload as any).sub as string | undefined) ?? role ?? "viewer";
+    const { payload } = await jwtVerify(raw, SECRET);
+    const role = (payload as any)?.role as Role | undefined;
+    const exp  = (payload as any)?.exp  as number | undefined;
+    const sub  = (payload as any)?.sub  as string | undefined;
     if (!role || !exp || Date.now() / 1000 > exp) return { role: "guest" };
-    return { role, sub, exp };
+    return { role, sub: sub || role, exp };
   } catch {
     return { role: "guest" };
   }
@@ -100,7 +81,7 @@ export async function requireAdmin() {
   return me;
 }
 
-// --- Compat (anciens imports) ---
+// --- alias pour compat avec tes imports existants ---
 export { signInWithPassword as createSession };
 export { clearAuthCookie as clearSession };
 export { getMe as getSession };
