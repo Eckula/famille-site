@@ -12,6 +12,7 @@
     "@tailwindcss/postcss": "^4.1.11",
     "autoprefixer": "^10.4.21",
     "cloudinary": "^2.7.0",
+    "jose": "^6.0.12",
     "next": "15.4.1",
     "pdfjs-dist": "^5.4.54",
     "postcss": "^8.5.6",

@@ -3,7 +3,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-const SIZE = 20;     // taille d'une case
+const SIZE = 20;     // taille d'un carreau (px)
 const COLS = 20;
 const ROWS = 20;
 
@@ -13,7 +13,7 @@ export default function Snake() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [dir, setDir] = useState<Pt>({ x: 1, y: 0 });
   const [snake, setSnake] = useState<Pt[]>([{ x: 5, y: 10 }, { x: 4, y: 10 }]);
-  const [food, setFood] = useState<Pt>({ x: 12, y: 10 });
+  const [food, setFood]   = useState<Pt>({ x: 12, y: 10 });
   const [alive, setAlive] = useState(true);
   const [score, setScore] = useState(0);
 
@@ -21,16 +21,16 @@ export default function Snake() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!alive) return;
-      if (e.key === "ArrowUp"    && dir.y !==  1) setDir({ x: 0, y: -1 });
-      if (e.key === "ArrowDown"  && dir.y !== -1) setDir({ x: 0, y:  1 });
-      if (e.key === "ArrowLeft"  && dir.x !==  1) setDir({ x: -1, y: 0 });
-      if (e.key === "ArrowRight" && dir.x !== -1) setDir({ x:  1, y: 0 });
+      if (e.key === "ArrowUp"    && dir.y !==  1) setDir({ x: 0,  y: -1 });
+      if (e.key === "ArrowDown"  && dir.y !== -1) setDir({ x: 0,  y:  1 });
+      if (e.key === "ArrowLeft"  && dir.x !==  1) setDir({ x: -1, y:  0 });
+      if (e.key === "ArrowRight" && dir.x !== -1) setDir({ x: 1,  y:  0 });
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [dir, alive]);
 
-  // loop
+  // game loop
   useEffect(() => {
     if (!alive) return;
     const id = setInterval(() => {
@@ -42,18 +42,23 @@ export default function Snake() {
           setAlive(false);
           return sn;
         }
-        // auto-collision
-        if (sn.some((p) => p.x === head.x && p.y === head.y)) {
+
+        const eat = head.x === food.x && head.y === food.y;
+
+        // auto-collision : on ignore la toute dernière case si on NE mange PAS,
+        // car la queue recule au même tick.
+        const bodyToCheck = eat ? sn : sn.slice(0, sn.length - 1);
+        if (bodyToCheck.some((p) => p.x === head.x && p.y === head.y)) {
           setAlive(false);
           return sn;
         }
 
-        const eat = head.x === food.x && head.y === food.y;
         const ns = [head, ...sn];
-        if (!eat) ns.pop();
-        else {
+        if (!eat) {
+          ns.pop();
+        } else {
           setScore((s) => s + 1);
-          // new food
+          // nouvelle nourriture à une case libre
           let fx = Math.floor(Math.random() * COLS);
           let fy = Math.floor(Math.random() * ROWS);
           while (ns.some((p) => p.x === fx && p.y === fy)) {
@@ -80,7 +85,9 @@ export default function Snake() {
     ctx.fillRect(0, 0, c.width, c.height);
     // snake
     ctx.fillStyle = "#0f0";
-    snake.forEach((p) => ctx.fillRect(p.x * SIZE, p.y * SIZE, SIZE - 1, SIZE - 1));
+    snake.forEach((p, i) => {
+      ctx.fillRect(p.x * SIZE, p.y * SIZE, SIZE - 1, SIZE - 1);
+    });
     // food
     ctx.fillStyle = "#f33";
     ctx.fillRect(food.x * SIZE, food.y * SIZE, SIZE - 1, SIZE - 1);
@@ -96,13 +103,22 @@ export default function Snake() {
 
   return (
     <main className="px-6 py-20 text-white">
-      <h1 className="text-3xl font-bold mb-2">Jeu : Snake</h1>
+      <h1 className="mb-2 text-3xl font-bold">Jeu : Snake</h1>
       <p className="mb-4 text-white/80">Utilise les flèches ← ↑ → ↓ pour jouer.</p>
-      <div className="flex items-center gap-4 mb-4">
+      <div className="mb-4 flex items-center gap-4">
         <div>Score : <b>{score}</b></div>
-        {!alive && <button onClick={reset} className="rounded-md border border-white/30 px-3 py-1 hover:bg-white/10">Rejouer</button>}
+        {!alive && (
+          <button onClick={reset} className="rounded-md border border-white/30 px-3 py-1 hover:bg-white/10">
+            Rejouer
+          </button>
+        )}
       </div>
-      <canvas ref={canvasRef} width={COLS * SIZE} height={ROWS * SIZE} className="rounded-lg border border-white/20 bg-black" />
+      <canvas
+        ref={canvasRef}
+        width={COLS * SIZE}
+        height={ROWS * SIZE}
+        className="rounded-lg border border-white/20 bg-black"
+      />
     </main>
   );
 }
