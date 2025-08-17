@@ -1,245 +1,316 @@
 // app/admin/upload/page.tsx
 "use client";
 
-/* eslint-disable @next/next/no-img-element */
+import { useCallback, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 
-import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+const MAX_MB = Number(process.env.NEXT_PUBLIC_MAX_UPLOAD_MB || 100);
+const ROOT = process.env.NEXT_PUBLIC_CLOUDINARY_ROOT || "famille";
 
-const CLOUD  = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME!;
-const PRESET = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET!;
+type UploadItem = {
+  file: File;
+  status: "idle" | "uploading" | "done" | "error";
+  progress: number;
+  url?: string;
+  public_id?: string;
+  error?: string;
+};
 
-type Status = "idle" | "uploading" | "done" | "error";
-const MAX_SIZE = 50 * 1024 * 1024;
-
-const RUBRICS = [
-  { key: "Photos", label: "Photos" },
-  { key: "Vidéos", label: "Vidéos" },
-  { key: "Documents", label: "Documents" },
-  { key: "Audio", label: "Audio" },
-  { key: "Autres", label: "Autres" },
-];
+const RUBRIQUES = ["Photos", "Vidéos", "Documents", "Audio"] as const;
+type Rubrique = typeof RUBRIQUES[number];
 
 export default function UploadPage() {
-  const router = useRouter();
+  const [rubrique, setRubrique] = useState<Rubrique>("Photos");
+  const [sub, setSub] = useState("");
+  const [items, setItems] = useState<UploadItem[]>([]);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  const [files, setFiles] = useState<File[]>([]);
-  const [previews, setPreviews] = useState<string[]>([]);
-  const [status, setStatus] = useState<Status>("idle");
-  const [progress, setProgress] = useState<number[]>([]);
-  const [msg, setMsg] = useState("");
-  const [rubric, setRubric] = useState<string>("Photos");
-  const [subFolder, setSubFolder] = useState<string>("");
+  const pickFiles = () => inputRef.current?.click();
 
-  useEffect(() => {
-    if (!CLOUD || !PRESET) {
-      setMsg("⚠️ Vérifie NEXT_PUBLIC_CLOUDINARY_* (cloud name + upload preset).");
-    }
-  }, []);
+  const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    setItems((prev) => [
+      ...prev,
+      ...files.map((f) => ({ file: f, status: "idle", progress: 0 })),
+    ]);
+    e.target.value = "";
+  };
 
-  function validate(f: File) {
-    if (f.size > MAX_SIZE) {
-      setMsg(`Fichier trop volumineux: ${f.name} (max 50 Mo)`);
-      return false;
-    }
-    return true;
-  }
-
-  function pick(list: FileList) {
-    const arr = Array.from(list).filter(validate);
-    setMsg("");
-    setFiles(arr);
-    setPreviews(
-      arr.map((f) =>
-        f.type.startsWith("image/") || f.type.startsWith("video/")
-          ? URL.createObjectURL(f)
-          : ""
-      )
-    );
-    setProgress(new Array(arr.length).fill(0));
-  }
-
-  function onInputChange(e: React.ChangeEvent<HTMLInputElement>) {
-    if (e.target.files) pick(e.target.files);
-  }
-  function onDrop(e: React.DragEvent) {
+  const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    if (e.dataTransfer.files) pick(e.dataTransfer.files);
-  }
-  function onDragOver(e: React.DragEvent) { e.preventDefault(); }
+    const files = Array.from(e.dataTransfer.files || []);
+    if (!files.length) return;
+    setItems((prev) => [
+      ...prev,
+      ...files.map((f) => ({ file: f, status: "idle", progress: 0 })),
+    ]);
+  };
+  const onDragOver = (e: React.DragEvent) => e.preventDefault();
 
-  function reset() {
-    setFiles([]); setPreviews([]); setProgress([]); setStatus("idle");
-    if (inputRef.current) inputRef.current.value = "";
+  function sanitizeSegment(s: string) {
+    return s.trim().replace(/\s+/g, "-").replace(/[^a-zA-Z0-9-_/\.]/g, "");
   }
-
-  function buildFolder() {
-    const parts = ["famille", rubric];
-    if (subFolder.trim()) parts.push(subFolder.trim());
+  const folderFinal = useMemo(() => {
+    const parts = [ROOT, rubrique].filter(Boolean);
+    if (sub.trim()) parts.push(sanitizeSegment(sub));
     return parts.join("/");
-  }
+  }, [rubrique, sub]);
 
-  async function uploadParallel() {
-    if (files.length === 0) {
-      setMsg("Sélectionne au moins un fichier.");
-      return;
-    }
-    if (!CLOUD || !PRESET) {
-      setMsg("⚠️ Config Cloudinary incomplète (NEXT_PUBLIC_…).");
-      return;
-    }
+  const viewItems = useMemo(
+    () =>
+      items.map((it) =>
+        it.file.size > MAX_MB * 1024 * 1024
+          ? { ...it, status: "error", error: `Fichier trop volumineux (> ${MAX_MB} Mo)` }
+          : it
+      ),
+    [items]
+  );
 
-    setStatus("uploading"); setMsg("");
-    const folder = buildFolder();
+  const uploadOne = useCallback(
+    async (idx: number) => {
+      const it = viewItems[idx];
+      if (!it || it.status === "uploading" || it.status === "done") return;
+      if (it.file.size > MAX_MB * 1024 * 1024) {
+        setItems((prev) => {
+          const copy = [...prev];
+          copy[idx] = { ...it, status: "error", error: `Fichier trop volumineux (> ${MAX_MB} Mo)` };
+          return copy;
+        });
+        return;
+      }
 
-    await Promise.allSettled(
-      files.map((file, i) => {
-        return new Promise<void>((resolve, reject) => {
-          const form = new FormData();
-          form.append("file", file);
-          form.append("upload_preset", PRESET);
-          form.append("folder", folder);
+      // 1) Signature
+      const signRes = await fetch("/api/cloudinary/sign-upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          folder: folderFinal,
+          size: it.file.size,
+        }),
+      });
+      if (!signRes.ok) {
+        const j = await signRes.json().catch(() => null);
+        setItems((prev) => {
+          const copy = [...prev];
+          copy[idx] = { ...it, status: "error", error: j?.error || "Erreur signature" };
+          return copy;
+        });
+        return;
+      }
+      const sign = await signRes.json();
 
-          // ✅ PDF => RAW, sinon AUTO
-          const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
-          const endpoint = isPdf
-            ? `https://api.cloudinary.com/v1_1/${CLOUD}/raw/upload`
-            : `https://api.cloudinary.com/v1_1/${CLOUD}/auto/upload`;
+      // 2) Upload direct → Cloudinary
+      const url = `https://api.cloudinary.com/v1_1/${sign.cloud_name}/auto/upload`;
+      const form = new FormData();
+      form.append("file", it.file);
+      form.append("api_key", sign.api_key);
+      form.append("timestamp", String(sign.timestamp));
+      form.append("signature", sign.signature);
+      if (sign.folder) form.append("folder", sign.folder);
+      form.append("use_filename", "true");
+      form.append("unique_filename", "false");
+      if (typeof sign.overwrite === "boolean") form.append("overwrite", String(sign.overwrite));
 
-          const xhr = new XMLHttpRequest();
-          xhr.open("POST", endpoint);
-          xhr.upload.onprogress = (ev) => {
-            if (ev.lengthComputable) {
-              setProgress((prev) => {
+      setItems((prev) => {
+        const copy = [...prev];
+        copy[idx] = { ...it, status: "uploading", progress: 0 };
+        return copy;
+      });
+
+      await new Promise<void>((resolve) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", url);
+        xhr.upload.onprogress = (ev) => {
+          if (ev.lengthComputable) {
+            const p = Math.round((ev.loaded / ev.total) * 100);
+            setItems((prev) => {
+              const copy = [...prev];
+              copy[idx] = { ...copy[idx], progress: p };
+              return copy;
+            });
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              const r = JSON.parse(xhr.responseText);
+              setItems((prev) => {
                 const copy = [...prev];
-                copy[i] = Math.round((ev.loaded / ev.total) * 100);
+                copy[idx] = {
+                  ...copy[idx],
+                  status: "done",
+                  progress: 100,
+                  url: r.secure_url,
+                  public_id: r.public_id,
+                };
+                return copy;
+              });
+            } catch {
+              setItems((prev) => {
+                const copy = [...prev];
+                copy[idx] = { ...copy[idx], status: "error", error: "Réponse invalide Cloudinary" };
                 return copy;
               });
             }
-          };
-          xhr.onload = () => {
+          } else {
+            let msg = "Échec de l’upload";
             try {
-              const res = JSON.parse(xhr.responseText);
-              if (res.secure_url) resolve();
-              else reject(new Error("Upload échoué"));
-            } catch { reject(new Error("Réponse invalide")); }
-          };
-          xhr.onerror = () => reject(new Error("Erreur réseau"));
-          xhr.send(form);
-        });
-      })
-    );
+              const j = JSON.parse(xhr.responseText);
+              msg = j?.error?.message || msg;
+            } catch {}
+            setItems((prev) => {
+              const copy = [...prev];
+              copy[idx] = { ...copy[idx], status: "error", error: msg };
+              return copy;
+            });
+          }
+          resolve();
+        };
+        xhr.onerror = () => {
+          setItems((prev) => {
+            const copy = [...prev];
+            copy[idx] = { ...copy[idx], status: "error", error: "Erreur réseau" };
+            return copy;
+          });
+          resolve();
+        };
+        xhr.send(form);
+      });
+    },
+    [viewItems, folderFinal]
+  );
 
-    setStatus("done");
-    setMsg("✅ Upload terminé !");
-    setTimeout(() => router.push("/galerie"), 900);
-  }
+  const startAll = async () => {
+    for (let i = 0; i < viewItems.length; i++) {
+      if (viewItems[i].status !== "done") await uploadOne(i);
+    }
+  };
+  const resetAll = () => setItems([]);
 
+  const total = viewItems.length;
+  const done = viewItems.filter((i) => i.status === "done").length;
+
+  // ── UI style "ancien formulaire"
   return (
-    <main className="px-6 py-20 text-white">
-      <h1 className="text-3xl font-bold mb-4">Uploader des médias</h1>
-      <p className="mb-6">
-        Sélectionne plusieurs fichiers (images, vidéos, PDF, Word, audio, etc.).
-        Ils seront rangés selon la rubrique choisie.
+    <main className="px-6 py-10 text-white">
+      <h1 className="text-3xl font-bold mb-1">Uploader des médias</h1>
+      <p className="mb-3 text-white/80">
+        Sélectionne plusieurs fichiers (images, vidéos, PDF, Word, audio, etc.). Ils seront rangés selon la rubrique choisie.
       </p>
 
-      {/* Choix rubrique + sous-dossier */}
-      <div className="mb-4 flex flex-col sm:flex-row gap-3 max-w-xl">
+      <div className="flex flex-wrap gap-2 items-center mb-2">
         <select
-          value={rubric}
-          onChange={(e) => setRubric(e.target.value)}
-          className="rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none"
+          value={rubrique}
+          onChange={(e) => setRubrique(e.target.value as Rubrique)}
+          className="rounded border border-white/30 bg-white/10 px-3 py-1.5"
         >
-          {RUBRICS.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
+          {RUBRIQUES.map((r) => (
+            <option key={r} value={r}>{r}</option>
+          ))}
         </select>
+
         <input
-          value={subFolder}
-          onChange={(e) => setSubFolder(e.target.value)}
+          value={sub}
+          onChange={(e) => setSub(e.target.value)}
           placeholder="Sous-dossier (ex: Anniversaires/Paul-2025)"
-          className="flex-1 rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none"
+          className="rounded border border-white/30 bg-white/10 px-3 py-1.5 min-w-[22rem]"
         />
       </div>
 
-      {/* Zone DnD + bouton choisir */}
       <div
         onDrop={onDrop}
         onDragOver={onDragOver}
-        className="max-w-xl border-2 border-dashed border-white/30 rounded-xl p-6 bg-black/40"
+        className="rounded-md border-2 border-dashed border-white/40 bg-black/30 p-4 text-center"
       >
+        <div className="mb-2 text-white/80">Glisse les fichiers ici</div>
         <input
           ref={inputRef}
-          id="file-input"
           type="file"
-          accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar"
           multiple
           className="hidden"
-          onChange={onInputChange}
+          onChange={onPick}
+          accept="image/*,video/*,audio/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         />
-        <div className="text-center space-y-3">
-          <p className="text-white/80">Glisse les fichiers ici</p>
-          <label
-            htmlFor="file-input"
-            className="inline-block cursor-pointer rounded-lg border border-white/20 bg-white/10 px-4 py-2 hover:bg-white/20"
-          >
-            Choisir des fichiers
-          </label>
-          <p className="text-xs text-white/60">Max 50 Mo par fichier</p>
-          <p className="text-xs text-white/60">Dossier final : <code>{buildFolder()}</code></p>
-        </div>
+        <button
+          onClick={pickFiles}
+          className="rounded-md border border-white/40 bg-white/10 px-4 py-2 hover:bg-white/20"
+        >
+          Choisir des fichiers
+        </button>
+        <div className="mt-2 text-xs text-white/60">Max {MAX_MB} Mo par fichier</div>
+        <div className="mt-1 text-xs text-white/50">Dossier final : <code>{folderFinal}</code></div>
+      </div>
 
-        {files.length > 0 && (
-          <div className="mt-4 grid grid-cols-2 gap-4">
-            {files.map((f, idx) => (
-              <div key={idx}>
-                {previews[idx] ? (
-                  f.type.startsWith("image/") ? (
-                    <img src={previews[idx]} alt={f.name} className="max-h-40 w-full object-cover rounded-lg" />
-                  ) : f.type.startsWith("video/") ? (
-                    <video src={previews[idx]} className="max-h-40 w-full object-cover rounded-lg" controls />
-                  ) : null
-                ) : (
-                  <div className="h-40 w-full grid place-items-center rounded-lg bg-white/5 border border-white/10 text-xs text-white/70">
-                    {f.name}
+      <div className="mt-3 flex gap-2">
+        <button
+          onClick={startAll}
+          disabled={!total}
+          className="rounded-md border border-white/40 bg-yellow-800/40 px-3 py-1.5 hover:bg-yellow-800/60 disabled:opacity-50"
+        >
+          Envoyer
+        </button>
+        <button
+          onClick={resetAll}
+          disabled={!total}
+          className="rounded-md border border-white/40 bg-white/10 px-3 py-1.5 hover:bg-white/20 disabled:opacity-50"
+        >
+          Réinitialiser
+        </button>
+        <Link prefetch={false} href="/galerie?tab=all" className="rounded-md border border-white/40 bg-white/10 px-3 py-1.5 hover:bg-white/20">
+          Retour à la galerie
+        </Link>
+      </div>
+
+      {!!total && (
+        <>
+          <div className="mt-3 text-sm text-white/80">{done}/{total} terminé(s)</div>
+          <div className="mt-2 space-y-2">
+            {viewItems.map((it, i) => (
+              <div key={i} className="rounded-md border border-white/20 bg-black/40 p-3">
+                <div className="flex justify-between items-center gap-3">
+                  <div className="truncate">
+                    <div className="font-medium truncate">{it.file.name}</div>
+                    <div className="text-xs text-white/60">{(it.file.size / (1024 * 1024)).toFixed(2)} Mo</div>
+                    <div className="text-xs text-white/50">→ {folderFinal}</div>
+                  </div>
+                  <div className="text-sm">
+                    {it.status === "idle" && <span className="text-white/70">En attente</span>}
+                    {it.status === "uploading" && <span className="text-yellow-300">Envoi… {it.progress}%</span>}
+                    {it.status === "done" && <span className="text-green-300">Terminé</span>}
+                    {it.status === "error" && <span className="text-red-300">Erreur</span>}
+                  </div>
+                </div>
+
+                {it.status !== "idle" && (
+                  <div className="mt-2 h-2 w-full bg-white/10 rounded">
+                    <div className="h-2 bg-white/70 rounded" style={{ width: `${it.progress}%`, transition: "width .2s" }} />
                   </div>
                 )}
-                <div className="mt-1 text-xs truncate">{f.name}</div>
-                {status === "uploading" && (
-                  <div className="h-2 bg-white/10 rounded mt-1">
-                    <div className="h-2 bg-yellow-500 rounded" style={{ width: `${progress[idx] ?? 0}%` }} />
+
+                {it.error && <div className="mt-2 text-sm text-red-300">⚠️ {it.error}</div>}
+
+                {it.status !== "done" && (
+                  <div className="mt-2">
+                    <button
+                      onClick={() => uploadOne(i)}
+                      className="rounded border border-white/30 px-3 py-1 hover:bg-white/10"
+                    >
+                      Envoyer ce fichier
+                    </button>
+                  </div>
+                )}
+
+                {it.url && (
+                  <div className="mt-2 text-xs break-all text-white/70">
+                    URL : <a className="underline" href={it.url} target="_blank" rel="noopener noreferrer">{it.url}</a>
                   </div>
                 )}
               </div>
             ))}
           </div>
-        )}
-      </div>
-
-      {/* Actions */}
-      <div className="mt-4 flex gap-3">
-        <button
-          onClick={uploadParallel}
-          disabled={files.length === 0 || status === "uploading"}
-          className="px-4 py-2 bg-yellow-500 text-black rounded-lg hover:bg-yellow-400 disabled:opacity-50"
-        >
-          {status === "uploading" ? "Envoi…" : "Envoyer"}
-        </button>
-        <button
-          onClick={reset}
-          disabled={files.length === 0 || status === "uploading"}
-          className="px-4 py-2 rounded-lg border border-white/30 hover:bg-white/10 disabled:opacity-50"
-        >
-          Réinitialiser
-        </button>
-        <button
-          onClick={() => router.push("/galerie")}
-          className="px-4 py-2 rounded-lg border border-white/30 hover:bg-white/10"
-        >
-          Retour à la galerie
-        </button>
-      </div>
-
-      {msg && <p className="mt-4">{msg}</p>}
+        </>
+      )}
     </main>
   );
 }
