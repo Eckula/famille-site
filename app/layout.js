@@ -15,14 +15,7 @@ export default function RootLayout({ children }) {
       <body className="min-h-screen text-slate-800 dark:text-slate-100">
         <ThemeProvider>
           {/* Vidéo de fond */}
-          <video
-            className="fixed inset-0 -z-10 h-full w-full object-cover"
-            autoPlay
-            muted
-            loop
-            playsInline
-            preload="metadata"
-          >
+          <video className="fixed inset-0 -z-10 h-full w-full object-cover" autoPlay muted loop playsInline preload="metadata">
             <source src="/videos/video2_vp9.webm" type="video/webm" />
             <source src="/videos/video2_h264.mp4" type="video/mp4" />
             <source src="/videos/video2.mp4" type="video/mp4" />
@@ -31,16 +24,13 @@ export default function RootLayout({ children }) {
           {/* Overlay pour lisibilité */}
           <div className="fixed inset-0 -z-10 bg-black/40" />
 
-          {/* Widget météo — même position que l'ancien bouton thème */}
-          <div className="fixed right-4 top-4 z-50">
-            <WeatherWidget />
-          </div>
+          {/* 👉 Le SEUL widget météo (il se place en haut-droite) */}
+          <WeatherWidget />
 
           {/* Barre de navigation */}
           <Nav />
-          <div className="h-16 md:h-20" /> {/* espace sous la barre */}
+          <div className="h-16 md:h-20" />
 
-          {/* Contenu principal */}
           {children}
         </ThemeProvider>
       </body>

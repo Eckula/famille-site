@@ -1,5 +1,4 @@
 // app/components/Nav.jsx
-
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -26,9 +25,8 @@ export default function Nav() {
   return (
     <nav className="fixed top-0 left-0 right-0 z-40">
       <div className="mx-auto max-w-6xl px-4">
-        {/* 👇 ajout de gap-x pour créer l'espace entre les 3 colonnes */}
         <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-x-4 md:gap-x-8 rounded-full border border-white/30 bg-black/35 px-4 py-2 text-white backdrop-blur">
-          {/* Colonne gauche : menu principal (desktop) */}
+          {/* Liens (desktop) */}
           <div className="hidden gap-3 md:flex">
             {LINKS.map((l) => {
               const active = pathname === l.href;
@@ -36,9 +34,7 @@ export default function Nav() {
                 <Link
                   key={l.href}
                   href={l.href}
-                  className={`rounded-full px-3 py-1.5 hover:bg-white/10 ${
-                    active ? "bg-white/10" : ""
-                  }`}
+                  className={`rounded-full px-3 py-1.5 hover:bg-white/10 ${active ? "bg-white/10" : ""}`}
                 >
                   {l.label}
                 </Link>
@@ -51,7 +47,7 @@ export default function Nav() {
             Famille Merenge — Accueil
           </Link>
 
-          {/* Colonne droite (plus de widget ici) */}
+          {/* Droite : Admin + burger */}
           <div className="flex items-center justify-end gap-3">
             <Link
               href="/admin"
@@ -59,6 +55,7 @@ export default function Nav() {
             >
               Admin
             </Link>
+
             <button
               ref={btnRef}
               type="button"
@@ -80,9 +77,7 @@ export default function Nav() {
                 <Link
                   key={l.href}
                   href={l.href}
-                  className={`rounded-lg px-3 py-2 hover:bg-white/10 ${
-                    pathname === l.href ? "bg-white/10" : ""
-                  }`}
+                  className={`rounded-lg px-3 py-2 hover:bg-white/10 ${pathname === l.href ? "bg-white/10" : ""}`}
                 >
                   {l.label}
                 </Link>
