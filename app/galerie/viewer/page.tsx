@@ -1,12 +1,12 @@
 // app/galerie/viewer/page.tsx
 "use client";
 
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 /**
  * Affiche n'importe quel média/doc dans un <iframe> plein écran
- * avec notre barre d'actions (boutons noirs visibles sur fond clair).
+ * + barre d'actions (boutons noirs sur fond clair).
  */
 export default function ViewerPage() {
   const sp = useSearchParams();
@@ -15,6 +15,7 @@ export default function ViewerPage() {
   const rawUrl = sp.get("url") || "";
   const title = sp.get("title") || "Document";
   const frameRef = useRef<HTMLIFrameElement>(null);
+  const [loading, setLoading] = useState(true);
 
   const { viewerSrc, fileName } = useMemo(() => {
     // Récup nom et extension
@@ -27,7 +28,7 @@ export default function ViewerPage() {
       const dot = last.lastIndexOf(".");
       if (dot > -1) ext = last.slice(dot + 1).toLowerCase();
     } catch {
-      // no-op
+      // no-op si rawUrl pas absolue
     }
 
     // Sélection du viewer selon l'extension
@@ -41,7 +42,7 @@ export default function ViewerPage() {
         encodeURIComponent(rawUrl) +
         "&wdStartOn=1&wdPrint=1";
     } else if (ext && !["pdf", "png", "jpg", "jpeg", "gif", "webp"].includes(ext)) {
-      // Fallback générique Google Viewer pour autres docs (txt, rtf, etc.)
+      // Fallback Google Viewer pour autres docs (txt, rtf, etc.)
       src =
         "https://docs.google.com/gview?embedded=1&url=" +
         encodeURIComponent(rawUrl);
@@ -50,7 +51,7 @@ export default function ViewerPage() {
   }, [rawUrl, title]);
 
   function handlePrint() {
-    // Impression possible pour PDF; pour les viewers externes, on ouvre dans un onglet.
+    // PDF ok, sinon on ouvre l’URL brute
     try {
       frameRef.current?.contentWindow?.focus();
       frameRef.current?.contentWindow?.print();
@@ -61,7 +62,7 @@ export default function ViewerPage() {
 
   return (
     <div className="fixed inset-0 bg-black">
-      {/* Barre d’actions (noire sur fond blanc) */}
+      {/* Barre d’actions (boutons noirs visibles) */}
       <div className="absolute top-2 right-2 z-20 flex gap-2">
         <button
           onClick={() => router.back()}
@@ -96,10 +97,17 @@ export default function ViewerPage() {
         </a>
       </div>
 
-      {/* Titre (optionnel) */}
+      {/* Titre */}
       <div className="absolute top-2 left-3 z-20 text-white/90 text-sm md:text-base">
         {fileName}
       </div>
+
+      {/* Loader simple */}
+      {loading && (
+        <div className="absolute inset-0 grid place-items-center text-white/80">
+          Chargement…
+        </div>
+      )}
 
       {/* Iframe plein écran */}
       <iframe
@@ -107,8 +115,4 @@ export default function ViewerPage() {
         src={viewerSrc}
         title={title}
         className="absolute inset-0 w-full h-full border-0 bg-white"
-        allow="fullscreen"
-      />
-    </div>
-  );
-}
+        allowFu
