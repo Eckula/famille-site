@@ -9,13 +9,30 @@ import { useRouter, useSearchParams } from "next/navigation";
  * avec barre d'actions (boutons noirs sur fond clair).
  */
 export default function ViewerPage() {
-  const sp = useSearchParams();
+  const sp = useSearchParams(); // peut être null selon les types
   const router = useRouter();
 
-  const rawUrl = sp.get("url") || "";
-  const title = sp.get("title") || "Document";
+  const rawUrl = sp?.get("url") ?? "";
+  const title = sp?.get("title") ?? "Document";
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [loading, setLoading] = useState(true);
+
+  // Si pas d'URL, on affiche un message et un bouton retour (évite tout crash)
+  if (!rawUrl) {
+    return (
+      <div className="fixed inset-0 bg-black text-white grid place-items-center p-6">
+        <div className="text-center space-y-4">
+          <div className="text-lg">Aucune URL de document fournie.</div>
+          <button
+            onClick={() => router.back()}
+            className="rounded-full bg-white/90 hover:bg-white text-black px-4 py-2 text-sm shadow"
+          >
+            ⬅️ Retour
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const { viewerSrc, fileName } = useMemo(() => {
     // Récup nom et extension
@@ -24,11 +41,11 @@ export default function ViewerPage() {
     try {
       const u = new URL(rawUrl);
       const last = decodeURIComponent(u.pathname.split("/").pop() || title);
-      fname = last;
+      fname = last || title;
       const dot = last.lastIndexOf(".");
       if (dot > -1) ext = last.slice(dot + 1).toLowerCase();
     } catch {
-      // no-op si rawUrl pas absolue
+      // no-op si rawUrl n'est pas une URL absolue (peu probable ici)
     }
 
     // Sélection du viewer selon l'extension
