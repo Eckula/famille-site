@@ -2,17 +2,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import cloudinary from "@/lib/cloudinary";
 
-export const runtime = "nodejs";
-
 const MAX_MB = Number(process.env.NEXT_PUBLIC_MAX_UPLOAD_MB || 100);
 const ROOT = process.env.CLOUDINARY_ROOT_FOLDER || "famille";
+const OVERWRITE =
+  (process.env.CLOUDINARY_OVERWRITE_ON_UPLOAD || "false").toLowerCase() === "true";
 
-// Génère la signature pour upload direct navigateur -> Cloudinary.
-// ⚠️ On NE SIGNE PAS `public_id`. On laisse Cloudinary dériver depuis le nom de fichier.
+// Nettoie un chemin de dossier (letters/digits/_-. et sous-dossiers)
+function cleanFolderPath(p: string) {
+  return (p || "")
+    .split("/")
+    .map((s) => s.trim().replace(/[^A-Za-z0-9._-]+/g, "-"))
+    .filter(Boolean)
+    .join("/");
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const { folder, size, overwrite } = body || {};
+    const {
+      folder,          // ex: "famille/Photos/Anniv-2025"
+      tags,
+      context,         // ex: { caption: "...", alt: "..." }
+      size,            // nombre (octets) envoyé par le client (recheck)
+    } = body || {};
 
     if (typeof size === "number" && size > MAX_MB * 1024 * 1024) {
       return NextResponse.json(
@@ -21,14 +33,28 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Dossier final
+    const finalFolder = cleanFolderPath(folder || ROOT) || ROOT;
+
     const timestamp = Math.floor(Date.now() / 1000);
+
+    // On SIGNE TOUT ce qui doit être pris en compte côté upload
+    // et on NE met PAS de public_id → Cloudinary gardera le nom d’origine
     const toSign: Record<string, any> = {
       timestamp,
-      folder: (folder || ROOT).replace(/\/+/g, "/"),
-      use_filename: true,     // ← garder le nom d’origine
-      unique_filename: false, // ← pas de suffixe aléatoire
+      folder: finalFolder,
+      use_filename: true,
+      unique_filename: false,
+      overwrite: OVERWRITE,
     };
-    if (typeof overwrite === "boolean") toSign.overwrite = overwrite;
+
+    if (tags) toSign.tags = Array.isArray(tags) ? tags.join(",") : String(tags);
+    if (context && typeof context === "object") {
+      const ctx = Object.entries(context)
+        .map(([k, v]) => `${k}=${String(v)}`)
+        .join("|");
+      toSign.context = ctx;
+    }
 
     const signature = cloudinary.utils.api_sign_request(
       toSign,
@@ -39,12 +65,12 @@ export async function POST(req: NextRequest) {
       ok: true,
       cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
       api_key: process.env.CLOUDINARY_API_KEY,
-      timestamp,
-      folder: toSign.folder,
       signature,
+      timestamp,
+      folder: finalFolder,
       use_filename: true,
       unique_filename: false,
-      overwrite: typeof overwrite === "boolean" ? overwrite : undefined,
+      overwrite: OVERWRITE,
       max_mb: MAX_MB,
     });
   } catch (e: any) {
