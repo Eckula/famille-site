@@ -5,8 +5,8 @@ import { useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 /**
- * Affiche n'importe quel média/doc dans un <iframe> plein écran
- * + barre d'actions (boutons noirs sur fond clair).
+ * Affiche un média/doc dans un <iframe> plein écran
+ * avec barre d'actions (boutons noirs sur fond clair).
  */
 export default function ViewerPage() {
   const sp = useSearchParams();
@@ -42,7 +42,7 @@ export default function ViewerPage() {
         encodeURIComponent(rawUrl) +
         "&wdStartOn=1&wdPrint=1";
     } else if (ext && !["pdf", "png", "jpg", "jpeg", "gif", "webp"].includes(ext)) {
-      // Fallback Google Viewer pour autres docs (txt, rtf, etc.)
+      // Fallback Google Viewer (txt, rtf, etc.)
       src =
         "https://docs.google.com/gview?embedded=1&url=" +
         encodeURIComponent(rawUrl);
@@ -51,7 +51,6 @@ export default function ViewerPage() {
   }, [rawUrl, title]);
 
   function handlePrint() {
-    // PDF ok, sinon on ouvre l’URL brute
     try {
       frameRef.current?.contentWindow?.focus();
       frameRef.current?.contentWindow?.print();
@@ -62,7 +61,7 @@ export default function ViewerPage() {
 
   return (
     <div className="fixed inset-0 bg-black">
-      {/* Barre d’actions (boutons noirs visibles) */}
+      {/* Barre d’actions */}
       <div className="absolute top-2 right-2 z-20 flex gap-2">
         <button
           onClick={() => router.back()}
@@ -102,7 +101,7 @@ export default function ViewerPage() {
         {fileName}
       </div>
 
-      {/* Loader simple */}
+      {/* Loader */}
       {loading && (
         <div className="absolute inset-0 grid place-items-center text-white/80">
           Chargement…
@@ -115,4 +114,10 @@ export default function ViewerPage() {
         src={viewerSrc}
         title={title}
         className="absolute inset-0 w-full h-full border-0 bg-white"
-        allowFu
+        allowFullScreen
+        referrerPolicy="no-referrer"
+        onLoad={() => setLoading(false)}
+      />
+    </div>
+  );
+}
