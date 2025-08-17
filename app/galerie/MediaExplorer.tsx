@@ -18,18 +18,36 @@ type Item = {
   createdAt: string;
 };
 
-const AUDIO_EXTS = new Set(["mp3", "wav", "m4a", "aac", "flac", "ogg", "oga", "wma", "aiff"]);
+const AUDIO_EXTS = new Set([
+  "mp3",
+  "wav",
+  "m4a",
+  "aac",
+  "flac",
+  "ogg",
+  "oga",
+  "wma",
+  "aiff",
+]);
 
 function kindOf(i: Item): Kind {
   if (i.resource_type === "image") return i.format === "pdf" ? "document" : "image";
   if (i.resource_type === "video") {
     return AUDIO_EXTS.has((i.format || "").toLowerCase()) ? "audio" : "video";
   }
-  return "document";
+  return "document"; // raw
 }
 
 function labelOfTab(t: Tab) {
-  return t === "all" ? "Tout" : t === "images" ? "Photos" : t === "videos" ? "Vidéos" : t === "audio" ? "Audio" : "Documents";
+  return t === "all"
+    ? "Tout"
+    : t === "images"
+    ? "Photos"
+    : t === "videos"
+    ? "Vidéos"
+    : t === "audio"
+    ? "Audio"
+    : "Documents";
 }
 
 export default function MediaExplorer() {
@@ -37,7 +55,9 @@ export default function MediaExplorer() {
     if (typeof window === "undefined") return "all";
     const s = new URLSearchParams(window.location.search);
     const t = (s.get("tab") || "all").toLowerCase() as Tab;
-    return (["all", "images", "videos", "audio", "documents"] as const).includes(t) ? t : "all";
+    return (["all", "images", "videos", "audio", "documents"] as const).includes(t)
+      ? t
+      : "all";
   });
 
   const [items, setItems] = useState<Item[]>([]);
@@ -62,18 +82,30 @@ export default function MediaExplorer() {
       url.searchParams.set("ts", String(Date.now())); // anti-cache
 
       const r = await fetch(url.toString(), { cache: "no-store" });
-      // ← EVITE le "Unexpected end of JSON input" quand le serveur ne renvoie rien/json invalide
-      let j: any = null;
-      try {
-        j = await r.json();
-      } catch {
-        j = null;
-      }
+      const raw = await r.text(); // on lit une fois le corps
+
+      // si erreur HTTP, essayer d'extraire un message JSON, sinon texte brut
       if (!r.ok) {
-        throw new Error(j?.error || `HTTP ${r.status}`);
+        let msg = `HTTP ${r.status}`;
+        try {
+          const j = raw ? JSON.parse(raw) : {};
+          msg = j?.error || msg;
+        } catch {
+          if (raw) msg = raw;
+        }
+        throw new Error(msg);
       }
+
+      // succès : parser JSON si non vide
+      let j: any = {};
+      try {
+        j = raw ? JSON.parse(raw) : {};
+      } catch {
+        j = {};
+      }
+
       const list: Item[] = Array.isArray(j?.items) ? j.items : [];
-      setItems((prev) => (next ? [...prev, ...list] : list));
+      setItems(prev => (next ? [...prev, ...list] : list));
       setCursor(j?.nextCursor || null);
     } catch (e: any) {
       setErrorMsg(e?.message || "Erreur inconnue");
@@ -82,6 +114,7 @@ export default function MediaExplorer() {
     }
   }
 
+  // (re)chargement quand l’onglet change
   useEffect(() => {
     fetchPage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -92,7 +125,9 @@ export default function MediaExplorer() {
   return (
     <section className="px-6 py-6 text-white">
       <h1 className="text-3xl font-bold mb-2">Galerie</h1>
-      <p className="mb-4 text-white/80">Photos, vidéos et documents du dossier Cloudinary <code>famille</code>.</p>
+      <p className="mb-4 text-white/80">
+        Photos, vidéos et documents du dossier Cloudinary <code>famille</code>.
+      </p>
 
       {errorMsg && <p className="mb-3 text-sm text-red-300">⚠️ {errorMsg}</p>}
 
@@ -119,13 +154,29 @@ export default function MediaExplorer() {
           {visible.map((m) => {
             const k = kindOf(m);
             const ext = (m.format || "").toLowerCase();
+
             return (
-              <article key={m.id} className="relative overflow-hidden rounded-lg border border-white/20 bg-white/5">
+              <article
+                key={m.id}
+                className="relative overflow-hidden rounded-lg border border-white/20 bg-white/5"
+              >
                 <div className="aspect-video bg-black/30">
                   {k === "image" ? (
-                    <Image src={m.thumb ?? m.url} alt={m.title || ""} width={800} height={600} className="w-full h-full object-cover" unoptimized />
+                    <Image
+                      src={m.thumb ?? m.url}
+                      alt={m.title || ""}
+                      width={800}
+                      height={600}
+                      className="w-full h-full object-cover"
+                      unoptimized
+                    />
                   ) : k === "video" ? (
-                    <video src={m.url} className="w-full h-full object-cover" preload="metadata" controls />
+                    <video
+                      src={m.url}
+                      className="w-full h-full object-cover"
+                      preload="metadata"
+                      controls
+                    />
                   ) : k === "audio" ? (
                     <div className="w-full h-full grid place-items-center p-3">
                       <div className="text-lg">🎵 {m.title || m.public_id}</div>
@@ -141,8 +192,12 @@ export default function MediaExplorer() {
                   )}
                 </div>
                 <div className="p-3">
-                  <div className="font-medium line-clamp-2">{m.title || m.public_id}</div>
-                  <div className="text-xs text-white/70">{new Date(m.createdAt).toLocaleString("fr-FR")}</div>
+                  <div className="font-medium line-clamp-2">
+                    {m.title || m.public_id}
+                  </div>
+                  <div className="text-xs text-white/70">
+                    {new Date(m.createdAt).toLocaleString("fr-FR")}
+                  </div>
                 </div>
               </article>
             );
