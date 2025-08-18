@@ -13,7 +13,7 @@ export default function GalleryFolders() {
   const [folders, setFolders]   = useState<Folder[]>([]);
   const [loadingFolders, setLoadingFolders] = useState(false);
 
-  // admin check (pour désactiver, pas pour cacher)
+  // Admin check (pour désactiver, pas pour cacher)
   const [isAdmin, setIsAdmin] = useState(false);
   const [checkingMe, setCheckingMe] = useState(true);
 
@@ -42,7 +42,7 @@ export default function GalleryFolders() {
     return "Mes fichiers";
   }, [view, folderId, folders]);
 
-  // on montre toujours les actions ; on ne les désactive que si on sait que l’utilisateur n’est pas admin
+  // on montre tjs les actions ; on ne les désactive que si on sait que l’utilisateur n’est pas admin
   const actionsDisabled = !isAdmin && !checkingMe;
 
   const checkMe = useCallback(async () => {
@@ -192,7 +192,7 @@ export default function GalleryFolders() {
         </button>
       </div>
 
-      {/* Liste des dossiers + actions */}
+      {/* Dossiers + actions */}
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <button
           onClick={goUnassigned}
