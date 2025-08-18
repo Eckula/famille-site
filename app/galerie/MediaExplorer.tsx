@@ -2,7 +2,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 type Kind = "image" | "video" | "document" | "audio";
 type Tab = "all" | "images" | "videos" | "audio" | "documents";
@@ -26,7 +26,6 @@ function kindOf(i: Item): Kind {
   if (i.resource_type === "video") return AUDIO_EXTS.has((i.format || "").toLowerCase()) ? "audio" : "video";
   return "document";
 }
-
 function labelOfTab(t: Tab) {
   return t === "all" ? "Tout" : t === "images" ? "Photos" : t === "videos" ? "Vidéos" : t === "audio" ? "Audio" : "Documents";
 }
@@ -50,7 +49,7 @@ export default function MediaExplorer() {
     history.replaceState(null, "", u.toString());
   }, [tab]);
 
-  async function fetchPage(next?: string) {
+  const fetchPage = useCallback(async (next?: string) => {
     setLoading(true);
     setErrorMsg("");
     try {
@@ -79,9 +78,9 @@ export default function MediaExplorer() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [tab]);
 
-  useEffect(() => { fetchPage(); /* eslint-disable-next-line react-hooks/exhaustive-deps*/ }, [tab]);
+  useEffect(() => { fetchPage(); }, [fetchPage]);
 
   const visible = useMemo(() => items, [items]);
 
@@ -92,7 +91,6 @@ export default function MediaExplorer() {
 
       {errorMsg && <p className="mb-3 text-sm text-red-300">⚠️ {errorMsg}</p>}
 
-      {/* Onglets */}
       <div className="mb-4 inline-flex rounded-full border border-white/20 bg-black/30 p-1 gap-2">
         {(["all","images","videos","audio","documents"] as const).map((t) => (
           <button
@@ -105,7 +103,6 @@ export default function MediaExplorer() {
         ))}
       </div>
 
-      {/* Grille */}
       {loading && !visible.length ? (
         <p className="text-white/70">Chargement…</p>
       ) : !visible.length ? (
@@ -143,7 +140,6 @@ export default function MediaExplorer() {
         </div>
       )}
 
-      {/* Pagination (si tu ajoutes un nextCursor côté API) */}
       <div className="mt-6">
         {cursor && (
           <button onClick={() => fetchPage(cursor)} disabled={loading} className="rounded-lg border border-white/30 bg-white/10 px-4 py-2 hover:bg-white/20">

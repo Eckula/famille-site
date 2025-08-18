@@ -1,5 +1,5 @@
 // app/api/folders/[id]/route.ts
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
 import { requireAdmin } from "../../_admin";
 
@@ -10,8 +10,7 @@ const prisma = new PrismaClient();
 const ok = (data: any, status = 200) =>
   NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });
 
-/** Renommer un dossier (admin-only) */
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: Request, { params }: { params: { id: string } }) {
   const deny = await requireAdmin(req);
   if (deny) return deny;
 
@@ -30,15 +29,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     });
     return ok({ item });
   } catch (e: any) {
-    // Erreurs Prisma courantes
     if (e?.code === "P2002") return ok({ error: "Un dossier porte déjà ce nom." }, 409);
     if (e?.code === "P2025") return ok({ error: "Dossier introuvable." }, 404);
     return ok({ error: e?.message || "Erreur de renommage." }, 400);
   }
 }
 
-/** Supprimer un dossier (admin-only) */
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: Request, { params }: { params: { id: string } }) {
   const deny = await requireAdmin(req);
   if (deny) return deny;
 

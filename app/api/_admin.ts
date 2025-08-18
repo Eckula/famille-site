@@ -1,8 +1,8 @@
 // app/api/_admin.ts
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
 /** Interroge /api/me en réutilisant les cookies de la requête. */
-export async function checkAdminFromRequest(req: NextRequest): Promise<{ isAdmin: boolean }> {
+export async function checkAdminFromRequest(req: Request): Promise<{ isAdmin: boolean }> {
   const meUrl = new URL("/api/me", req.url);
   const cookie = req.headers.get("cookie") || "";
   try {
@@ -21,7 +21,7 @@ export async function checkAdminFromRequest(req: NextRequest): Promise<{ isAdmin
 }
 
 /** À placer tout en haut des routes protégées. */
-export async function requireAdmin(req: NextRequest) {
+export async function requireAdmin(req: Request) {
   const { isAdmin } = await checkAdminFromRequest(req);
   if (!isAdmin) {
     return NextResponse.json(
@@ -31,3 +31,4 @@ export async function requireAdmin(req: NextRequest) {
   }
   return null;
 }
+

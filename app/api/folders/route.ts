@@ -1,5 +1,5 @@
 // app/api/folders/route.ts
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
 import { requireAdmin } from "../_admin";
 
@@ -22,8 +22,7 @@ export async function GET() {
   }
 }
 
-export async function POST(req: NextRequest) {
-  // 🔒 Admin requis
+export async function POST(req: Request) {
   const deny = await requireAdmin(req);
   if (deny) return deny;
 

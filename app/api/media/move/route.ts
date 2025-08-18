@@ -1,5 +1,5 @@
 // app/api/media/move/route.ts
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { v2 as cloudinary } from "cloudinary";
 import { requireAdmin } from "../../_admin";
 
@@ -22,8 +22,7 @@ function baseName(pid: string) {
   return parts[parts.length - 1];
 }
 
-export async function POST(req: NextRequest) {
-  // 🔒 Admin requis
+export async function POST(req: Request) {
   const deny = await requireAdmin(req);
   if (deny) return deny;
 
@@ -43,7 +42,6 @@ export async function POST(req: NextRequest) {
       const toId = `${target}/${baseName(pid)}`;
       let done = false;
 
-      // On essaie pour chaque resource_type
       for (const rt of ["image", "video", "raw"] as const) {
         try {
           // @ts-ignore
@@ -52,12 +50,10 @@ export async function POST(req: NextRequest) {
         } catch (e: any) {
           const msg = e?.error?.message || e?.message || "";
           if (!/not found/i.test(msg)) {
-            // autre erreur que "pas trouvé", on la stocke
             errors.push({ id: pid, error: msg || "rename error" });
-            done = true; // on arrête d'essayer d'autres types pour celui-ci
+            done = true;
             break;
           }
-          // sinon on tente avec le type suivant
         }
       }
 

@@ -1,5 +1,5 @@
 // app/api/media/delete/route.ts
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { v2 as cloudinary } from "cloudinary";
 import { requireAdmin } from "../../_admin";
 
@@ -17,8 +17,7 @@ function ensureCloudinary() {
   cloudinary.config({ cloud_name: cn, api_key: ak, api_secret: as, secure: true });
 }
 
-export async function POST(req: NextRequest) {
-  // 🔒 Admin requis
+export async function POST(req: Request) {
   const deny = await requireAdmin(req);
   if (deny) return deny;
 
