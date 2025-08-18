@@ -11,33 +11,43 @@ const ok = (data: any, status = 200) =>
   NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });
 
 /**
- * Déplace des médias (public_id) d'un dossier à un autre (affectation BD).
+ * Déplace des médias (public_id) d'un dossier à un autre dans la BD.
  * Body JSON:
  *   {
- *     "toFolderId": "xxx" | null,       // null => désaffecter
- *     "fromFolderId": "yyy" | undefined // optionnel: ne déplacer que s'ils viennent de ce dossier
- *     "public_ids": ["a","b","c"]
+ *     "toFolderId": "xxx" | null,       // null => désaffecter (retirer du dossier)
+ *     "fromFolderId"?: "yyy" | null,    // optionnel: ne déplacer que s'ils viennent de ce dossier
+ *     "public_ids": ["a","b","c"]       // requis
  *   }
  */
 export async function POST(req: Request) {
+  // 🔒 Admin requis
   const deny = await requireAdmin(req);
   if (deny) return deny;
 
   try {
-    const { toFolderId, fromFolderId, public_ids } = await req.json();
-
-    const ids: string[] = Array.isArray(public_ids)
-      ? public_ids.filter(Boolean)
-      : [];
-
-    if (!("toFolderId" in (await req.json().catch(() => ({}))) ?? true)) {
-      // sécurité défensive ; mais on valide juste ci-dessous
+    // ✅ on parse UNE seule fois
+    const body = await req.json().catch(() => null);
+    if (!body || typeof body !== "object") {
+      return ok({ error: "JSON invalide." }, 400);
     }
 
-    if (ids.length === 0) return ok({ error: "Aucun public_id fourni." }, 400);
-    // toFolderId peut être null (désaffecter)
-    if (typeof toFolderId === "undefined")
+    const { toFolderId, fromFolderId, public_ids } = body as {
+      toFolderId: string | null | undefined;
+      fromFolderId?: string | null;
+      public_ids: unknown;
+    };
+
+    const ids: string[] = Array.isArray(public_ids)
+      ? (public_ids as string[]).filter(Boolean)
+      : [];
+
+    if (ids.length === 0) {
+      return ok({ error: "Aucun public_id fourni." }, 400);
+    }
+    // toFolderId peut être null (désaffecter), mais doit être fourni (même null)
+    if (typeof toFolderId === "undefined") {
       return ok({ error: "toFolderId requis (ou null pour désaffecter)." }, 400);
+    }
 
     const moved: MediaIndexType[] = [];
     const updated: MediaIndexType[] = [];
@@ -48,8 +58,8 @@ export async function POST(req: Request) {
       for (const publicId of ids) {
         const existing = await tx.mediaIndex.findUnique({ where: { publicId } });
 
-        // Si un filtre fromFolderId est donné, on le respecte
         if (existing) {
+          // Respecte le filtre fromFolderId si fourni
           if (
             typeof fromFolderId === "undefined" ||
             existing.folderId === fromFolderId
@@ -64,7 +74,7 @@ export async function POST(req: Request) {
             skipped.push(publicId);
           }
         } else {
-          // Pas d'entrée existante: on crée seulement si toFolderId != null
+          // Pas d'entrée : on crée seulement si on assigne à un dossier (pas pour désaffecter)
           if (toFolderId == null) {
             skipped.push(publicId);
             continue;
@@ -89,3 +99,4 @@ export async function POST(req: Request) {
     return ok({ error: e?.message || "Erreur déplacement (folders/move)." }, 400);
   }
 }
+
