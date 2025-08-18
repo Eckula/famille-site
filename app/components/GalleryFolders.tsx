@@ -8,7 +8,7 @@ type Folder = { id: string; name: string; parentId: string | null; createdAt: st
 
 export default function GalleryFolders() {
   const router = useRouter();
-  const sp = useSearchParams();
+  const sp = useSearchParams(); // peut être null selon les types Next 15
 
   const [folders, setFolders]   = useState<Folder[]>([]);
   const [creating, setCreating] = useState(false);
@@ -16,11 +16,12 @@ export default function GalleryFolders() {
   const [name, setName]         = useState("");
 
   // Renommage inline
-  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renamingId, setRenamingId]   = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
 
-  const view = (sp.get("view") || "unassigned").toLowerCase();
-  const folderId = sp.get("folderId") || "";
+  // ✅ null-safe sur sp
+  const view = (sp?.get("view") ?? "unassigned").toLowerCase();
+  const folderId = sp?.get("folderId") ?? "";
 
   const activeLabel = useMemo(() => {
     if (view === "unassigned") return "Mes fichiers";
@@ -36,7 +37,7 @@ export default function GalleryFolders() {
   const refresh = useCallback(async () => {
     try {
       const r = await fetch("/api/folders", { cache: "no-store" });
-      const j = await r.json();
+      const j = await r.json().catch(() => ({}));
       setFolders(Array.isArray(j?.items) ? j.items : []);
     } catch {
       setFolders([]);
@@ -129,12 +130,12 @@ export default function GalleryFolders() {
       }
       cancelRename();
       await refresh();
-      // si on regardait ce dossier, mettre à jour l'URL pour refléter le nouveau label
-      if ((sp.get("view") || "") === "folder" && (sp.get("folderId") || "") === id) {
+      // si on regarde ce dossier, l'intitulé se mettra à jour via la liste
+      if (view === "folder" && folderId === id) {
         const url = new URL(window.location.href);
-        router.replace(url.toString()); // le label vient de la liste, il sera réévalué
+        router.replace(url.toString());
       }
-    } catch (e: any) {
+    } catch {
       alert("Erreur de renommage.");
     }
   }
@@ -180,7 +181,6 @@ export default function GalleryFolders() {
                     title={`Renommer le dossier ${f.name}`}
                     aria-label={`Renommer le dossier ${f.name}`}
                   >
-                    {/* ✏️ (crayon) */}
                     <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 text-white/80">
                       <path stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
                         d="M4 20h4l10.5-10.5a1.5 1.5 0 0 0 0-2.121l-1.879-1.879a1.5 1.5 0 0 0-2.121 0L4 14v6zM15 6l3 3" />
