@@ -10,11 +10,20 @@ const prisma = new PrismaClient();
 const ok = (data: any, status = 200) =>
   NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });
 
-export async function PATCH(req: Request, { params }: { params: { id: string } }) {
+// Récupère l'ID depuis l'URL (/api/folders/:id)
+function getIdFromUrl(req: Request) {
+  const { pathname } = new URL(req.url);
+  // ex: /api/folders/abc123  → id = abc123
+  const m = pathname.match(/\/api\/folders\/([^/]+)\/?$/);
+  return m?.[1] || "";
+}
+
+/** Renommer un dossier (admin-only) */
+export async function PATCH(req: Request) {
   const deny = await requireAdmin(req);
   if (deny) return deny;
 
-  const id = params?.id;
+  const id = getIdFromUrl(req);
   if (!id) return ok({ error: "ID manquant." }, 400);
 
   try {
@@ -35,11 +44,12 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   }
 }
 
-export async function DELETE(req: Request, { params }: { params: { id: string } }) {
+/** Supprimer un dossier (admin-only) */
+export async function DELETE(req: Request) {
   const deny = await requireAdmin(req);
   if (deny) return deny;
 
-  const id = params?.id;
+  const id = getIdFromUrl(req);
   if (!id) return ok({ error: "ID manquant." }, 400);
 
   try {
