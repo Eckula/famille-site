@@ -4,26 +4,26 @@
 import Link from "next/link";
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import GalleryFolders from "../components/GalleryFolders";
 
 /* ---------- Types ---------- */
-
 type Kind = "image" | "video" | "audio" | "document";
 type Item = {
   id: string;
-  public_id: string; // Cloudinary public_id (avec dossier)
+  public_id: string;
   kind: Kind;
   title: string;
   url: string;
   thumb?: string;
   createdAt: string;
-  format?: string; // "pdf", "mp3", "docx", ...
+  format?: string;
   folder?: string;
   resource_type?: "image" | "video" | "raw";
 };
 type Tab = "all" | "images" | "videos" | "audio" | "documents";
 
 /* ---------- Helpers ---------- */
-
 const isYouTube = (url: string) => /youtu\.be|youtube\.com/.test(url);
 
 function getTabFromUrl(): Tab {
@@ -44,7 +44,7 @@ function docEmoji(ext?: string) {
   if (["doc","docx"].includes(e)) return "📝";
   if (["xls","xlsx","csv"].includes(e)) return "📊";
   if (["ppt","pptx"].includes(e)) return "📽️";
-  if (audioExts.includes(e))      return "🎵";
+  if (audioExts.includes(e)) return "🎵";
   if (["zip","rar","7z","tar","gz"].includes(e)) return "🗜️";
   return "📎";
 }
@@ -52,92 +52,102 @@ function docEmoji(ext?: string) {
 function sanitizeName(name: string) {
   return name.replace(/[^\w.\-\sÀ-ÖØ-öø-ÿ]/g, "_");
 }
-
-/** URL absolue vers ton proxy /api/media/file */
 function apiFile(publicId: string, params: Record<string, string | number | boolean | undefined> = {}) {
   const origin = typeof window === "undefined" ? "" : window.location.origin;
   const u = new URL("/api/media/file", origin);
   u.searchParams.set("public_id", publicId);
-  Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && v !== "") u.searchParams.set(k, String(v));
-  });
+  Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== null && v !== "") u.searchParams.set(k, String(v)); });
   return u.toString();
 }
-
-/** URL pour ouvrir inline (lightbox / nouvel onglet) */
 function openUrl(it: Item, overrideExt?: string) {
   const ext = (overrideExt || it.format || "").toLowerCase();
   const baseName = it.title?.trim() || it.public_id.split("/").pop() || "document";
   const nice = sanitizeName(ext && !baseName.endsWith("." + ext) ? `${baseName}.${ext}` : baseName);
   return apiFile(it.public_id, { format: ext || "", dl: 0, filename: nice });
 }
-
-/** URL pour télécharger avec joli nom */
 function downloadUrl(it: Item, overrideExt?: string) {
   const ext = (overrideExt || it.format || "").toLowerCase();
   const baseName = it.title?.trim() || it.public_id.split("/").pop() || "document";
   const nice = sanitizeName(ext && !baseName.endsWith("." + ext) ? `${baseName}.${ext}` : baseName);
   return apiFile(it.public_id, { format: ext || "", dl: 1, filename: nice });
 }
-
 function folderOf(it: Item) {
-  return (it.folder && it.folder.length > 0)
-    ? it.folder.replace(/\/+$/,"")
-    : it.public_id.split("/").slice(0, -1).join("/").replace(/\/+$/,"");
+  return (it.folder && it.folder.length > 0 ? it.folder.replace(/\/+$/, "") : it.public_id.split("/").slice(0, -1).join("/").replace(/\/+$/, ""))!;
 }
 
-/* ---------- Component ---------- */
-
+/* ---------- Page ---------- */
 export default function GaleriePage() {
+  const searchParams = useSearchParams();
+
   const [raw, setRaw] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
+  const [retryAt, setRetryAt] = useState<number>(0);
 
   const [tab, setTab] = useState<Tab>("all");
   const [query, setQuery] = useState("");
-  const [sort, setSort] = useState<"newest"|"oldest">("newest");
+  const [sort, setSort] = useState<"newest" | "oldest">("newest");
 
   // Sélection multiple
   const [selectedPublicIds, setSelectedPublicIds] = useState<Set<string>>(new Set());
   const toggleSel = (publicId: string) =>
-    setSelectedPublicIds(s => (s.has(publicId) ? new Set([...s].filter(x=>x!==publicId)) : new Set(s).add(publicId)));
+    setSelectedPublicIds((s) => (s.has(publicId) ? new Set([...s].filter((x) => x !== publicId)) : new Set(s).add(publicId)));
   const clearSel = () => setSelectedPublicIds(new Set());
+
+  // Déplacement Cloudinary (physique)
   const [moveFolder, setMoveFolder] = useState("famille/Photos");
+
+  // Dossiers BD (affectation)
+  type Folder = { id: string; name: string; parentId: string | null; createdAt: string };
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [assignFolderId, setAssignFolderId] = useState<string>("");
 
   // Lightbox
   const [lbOpen, setLbOpen] = useState(false);
   const [lbIndex, setLbIndex] = useState(0);
-  const swipeStartX = useRef<number|null>(null);
+  const swipeStartX = useRef<number | null>(null);
 
-  /* ---------- Chargement & normalisation ---------- */
-  const fetchList = useCallback(async () => {
+  /* ---------- Chargements ---------- */
+  const fetchList = useCallback(async (force = false) => {
     setLoading(true);
     setErrorMsg("");
     try {
-      const r = await fetch("/api/media/list", { cache: "no-store" });
+      const v = (searchParams.get("view") || "unassigned").toLowerCase();
+      const folderId = searchParams.get("folderId") || "";
+      const currentTab = getTabFromUrl();
+
+      const qs = new URLSearchParams();
+      if (v) qs.set("view", v);
+      if (folderId) qs.set("folderId", folderId);
+      if (currentTab) qs.set("tab", currentTab);
+      if (force) qs.set("force", "1");
+
+      const r = await fetch(`/api/media/list?${qs.toString()}`, { cache: "no-store" });
       if (!r.ok) {
         setRaw([]);
         setErrorMsg(`/api/media/list a répondu ${r.status}`);
+        setRetryAt(0);
         return;
       }
       const j = await r.json();
-
-      const src: any[] = Array.isArray(j?.items) ? j.items
-                     : Array.isArray(j?.resources) ? j.resources
-                     : Array.isArray(j) ? j : [];
+      const src: any[] = Array.isArray(j?.items)
+        ? j.items
+        : Array.isArray(j?.resources)
+        ? j.resources
+        : Array.isArray(j)
+        ? j
+        : [];
 
       const list: Item[] = src.map((x: any) => {
         const public_id: string = x.public_id || x?.asset_id || "";
         const title = x.title || x.original_filename || (public_id ? public_id.split("/").pop() : "") || "";
         const primaryUrl: string = x.url || x.secure_url || x.path || "";
         const fmt = (x.format || "") || (primaryUrl.includes(".") ? primaryUrl.split(".").pop()?.toLowerCase() : "");
-
         const rt  = (x.resource_type || "").toLowerCase();
         const ext = String(fmt || "").toLowerCase();
         const isImg   = rt === "image" || imageExts.includes(ext);
-        const isAudio = audioExts.includes(ext); // 👈 détection audio (Cloudinary range souvent l’audio en resource_type "video")
+        const isAudio = audioExts.includes(ext);
         const isVid   = (!isAudio && (rt === "video" || videoExts.includes(ext)));
-
         const kind: Kind = isImg ? "image" : isAudio ? "audio" : isVid ? "video" : "document";
         const createdAt = x.createdAt || x.created_at || x.uploaded_at || new Date().toISOString();
 
@@ -146,7 +156,7 @@ export default function GaleriePage() {
           public_id,
           kind,
           title,
-          url: primaryUrl, // pour miniatures/vidéos publiques
+          url: primaryUrl,
           thumb: x.thumb || x.thumbnail_url || x.secure_url || primaryUrl,
           createdAt,
           format: ext || undefined,
@@ -156,6 +166,7 @@ export default function GaleriePage() {
       });
 
       setRaw(list);
+      setRetryAt(Number(j?.retryAt || 0));
       if (!list.length) {
         const errTxt = j?.error || j?.message || "";
         if (errTxt) setErrorMsg(String(errTxt));
@@ -163,131 +174,155 @@ export default function GaleriePage() {
     } catch (e: any) {
       setRaw([]);
       setErrorMsg(e?.message || "Erreur inconnue");
+      setRetryAt(0);
     } finally {
       setLoading(false);
     }
+  }, [searchParams]);
+
+  const fetchFolders = useCallback(async () => {
+    try {
+      const r = await fetch("/api/folders", { cache: "no-store" });
+      const j = await r.json();
+      if (r.ok && Array.isArray(j?.items)) setFolders(j.items);
+      else setFolders([]);
+    } catch {
+      setFolders([]);
+    }
   }, []);
 
-  useEffect(() => { setTab(getTabFromUrl()); fetchList(); }, [fetchList]);
+  useEffect(() => {
+    setTab(getTabFromUrl());
+    fetchList();
+    fetchFolders();
+  }, [fetchList, fetchFolders, searchParams]);
 
   /* ---------- Filtres / Tri ---------- */
   const items = useMemo(() => {
     let data = [...raw];
-    if (tab==="images")    data = data.filter(x=>x.kind==="image");
-    if (tab==="videos")    data = data.filter(x=>x.kind==="video");
-    if (tab==="audio")     data = data.filter(x=>x.kind==="audio");     // 👈 audio
-    if (tab==="documents") data = data.filter(x=>x.kind==="document");
+    if (tab === "images") data = data.filter((x) => x.kind === "image");
+    if (tab === "videos") data = data.filter((x) => x.kind === "video");
+    if (tab === "audio") data = data.filter((x) => x.kind === "audio");
+    if (tab === "documents") data = data.filter((x) => x.kind === "document");
     const q = query.trim().toLowerCase();
-    if (q) data = data.filter(x => (x.title || "").toLowerCase().includes(q));
-    data.sort((a,b)=>
-      sort==="newest"
+    if (q) data = data.filter((x) => (x.title || "").toLowerCase().includes(q));
+    data.sort((a, b) =>
+      sort === "newest"
         ? +new Date(b.createdAt) - +new Date(a.createdAt)
         : +new Date(a.createdAt) - +new Date(b.createdAt)
     );
     return data;
   }, [raw, tab, query, sort]);
 
-  const viewable = items; // tout est ouvrable (images/vidéos/audio/doc via iframe)
+  const viewable = items;
 
-  /* ---------- Actions API ---------- */
-
+  /* ---------- Actions API médias ---------- */
   async function doDelete() {
-    if (selectedPublicIds.size===0) return;
+    if (selectedPublicIds.size === 0) return;
     if (!confirm(`Supprimer ${selectedPublicIds.size} élément(s) ?`)) return;
     const payload = { ids: Array.from(selectedPublicIds), public_ids: Array.from(selectedPublicIds) };
     const res = await fetch("/api/media/delete", {
-      method:"POST", headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify(payload)
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
     });
     const j = await res.json();
     if (!res.ok) alert(j?.error || "Erreur suppression.");
-    clearSel(); fetchList();
+    clearSel();
+    fetchList(true); // re-scan forcé
   }
 
-  async function doMove() {
-    if (selectedPublicIds.size===0) return;
-    const target = moveFolder.trim().replace(/\/+$/,"");
-    if (!target) { alert("Renseigne un dossier cible"); return; }
+  // Déplacement Cloudinary (physique)
+  async function doMoveCloudinary() {
+    if (selectedPublicIds.size === 0) return;
+    const target = moveFolder.trim().replace(/\/+$/, "");
+    if (!target) { alert("Renseigne un dossier Cloudinary cible (ex: famille/Photos/2025)"); return; }
 
-    const selectedItems = items.filter(i => selectedPublicIds.has(i.public_id));
-    const already = selectedItems.filter(i => folderOf(i) === target);
-    const toMovePublicIds = selectedItems.filter(i => folderOf(i) !== target).map(i => i.public_id);
+    const selectedItems = items.filter((i) => selectedPublicIds.has(i.public_id));
+    const already = selectedItems.filter((i) => folderOf(i) === target);
+    const toMovePublicIds = selectedItems.filter((i) => folderOf(i) !== target).map((i) => i.public_id);
 
-    if (already.length && !toMovePublicIds.length) {
-      alert("Les éléments sélectionnés sont déjà dans ce dossier.");
-      return;
-    }
+    if (already.length && !toMovePublicIds.length) { alert("Les éléments sélectionnés sont déjà dans ce dossier Cloudinary."); return; }
     if (!toMovePublicIds.length) return;
 
     const payload = { ids: toMovePublicIds, public_ids: toMovePublicIds, toFolder: target };
     const res = await fetch("/api/media/move", {
-      method:"POST", headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify(payload)
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
     });
     const j = await res.json();
-    if (!res.ok) { alert(j?.error || "Erreur déplacement."); return; }
+    if (!res.ok) { alert(j?.error || "Erreur déplacement Cloudinary."); return; }
 
-    if (already.length) {
-      alert(`Déplacement effectué. ${already.length} élément(s) étaient déjà dans « ${target} » et ont été ignorés.`);
-    }
-    clearSel(); fetchList();
+    if (already.length) alert(`Déplacement effectué. ${already.length} élément(s) étaient déjà dans « ${target} ».`);
+    clearSel();
+    fetchList(true); // re-scan forcé
   }
 
-  /* ---------- Téléchargements (via proxy pour jolis noms) ---------- */
+  // Affectation à un dossier (BD)
+  async function doAssignFolder() {
+    if (selectedPublicIds.size === 0) return;
+    if (!assignFolderId) { alert("Sélectionne un dossier dans la liste."); return; }
+    const payload = { folderId: assignFolderId, public_ids: Array.from(selectedPublicIds) };
+    const res = await fetch("/api/folders/assign", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    const j = await res.json();
+    if (!res.ok) { alert(j?.error || "Erreur d'affectation au dossier."); return; }
+    clearSel();
+    fetchFolders();
+    fetchList(true);
+    alert(`Affectés à ${folders.find(f => f.id === assignFolderId)?.name || "le dossier"} (${j.count})`);
+  }
+  async function doUnassignFolder() {
+    if (selectedPublicIds.size === 0) return;
+    const payload = { folderId: null, public_ids: Array.from(selectedPublicIds) };
+    const res = await fetch("/api/folders/assign", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    const j = await res.json();
+    if (!res.ok) { alert(j?.error || "Erreur de retrait du dossier."); return; }
+    clearSel();
+    fetchFolders();
+    fetchList(true);
+    alert(`Retirés du dossier (${j.count})`);
+  }
 
+  /* ---------- Téléchargements ---------- */
   function openMany(list: Item[], dl: boolean) {
     list.forEach((it, idx) => {
       const u = dl ? downloadUrl(it) : openUrl(it);
       setTimeout(() => {
         const a = document.createElement("a");
-        a.href = u;
-        a.target = "_blank";
-        a.rel = "noopener";
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
+        a.href = u; a.target = "_blank"; a.rel = "noopener";
+        document.body.appendChild(a); a.click(); a.remove();
       }, idx * 150);
     });
   }
-
-  function downloadSelected() {
-    if (selectedPublicIds.size === 0) return;
-    const list = items.filter(i => selectedPublicIds.has(i.public_id));
-    openMany(list, true);
-  }
-  function downloadVisible() {
-    if (items.length === 0) return;
-    openMany(items, true);
-  }
+  function downloadSelected() { if (selectedPublicIds.size === 0) return; openMany(items.filter(i => selectedPublicIds.has(i.public_id)), true); }
+  function downloadVisible()  { if (items.length === 0) return; openMany(items, true); }
 
   /* ---------- Sélection globale ---------- */
-
   const allVisibleSelected = useMemo(
-    () => items.length > 0 && items.every(i => selectedPublicIds.has(i.public_id)),
+    () => items.length > 0 && items.every((i) => selectedPublicIds.has(i.public_id)),
     [items, selectedPublicIds]
   );
   const toggleSelectAllVisible = () => {
-    setSelectedPublicIds(prev => {
+    setSelectedPublicIds((prev) => {
       const next = new Set(prev);
-      if (allVisibleSelected) items.forEach(i => next.delete(i.public_id));
-      else items.forEach(i => next.add(i.public_id));
+      if (allVisibleSelected) items.forEach((i) => next.delete(i.public_id));
+      else items.forEach((i) => next.add(i.public_id));
       return next;
     });
   };
 
   /* ---------- Lightbox ---------- */
-
   const openLightboxFor = (id: string) => {
-    const idx = viewable.findIndex(x=>x.id===id);
-    if (idx>=0) { setLbIndex(idx); setLbOpen(true); }
+    const idx = viewable.findIndex((x) => x.id === id);
+    if (idx >= 0) { setLbIndex(idx); setLbOpen(true); }
   };
-
   useEffect(() => {
     if (!lbOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key==="Escape") setLbOpen(false);
-      if (e.key==="ArrowLeft") setLbIndex(i => (i-1+viewable.length)%viewable.length);
-      if (e.key==="ArrowRight") setLbIndex(i => (i+1)%viewable.length);
+      if (e.key === "Escape") setLbOpen(false);
+      if (e.key === "ArrowLeft")  setLbIndex((i) => (i - 1 + viewable.length) % viewable.length);
+      if (e.key === "ArrowRight") setLbIndex((i) => (i + 1) % viewable.length);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -295,67 +330,62 @@ export default function GaleriePage() {
 
   const onTouchStart = (e: React.TouchEvent) => { swipeStartX.current = e.touches[0].clientX; };
   const onTouchEnd = (e: React.TouchEvent) => {
-    if (swipeStartX.current==null) return;
+    if (swipeStartX.current == null) return;
     const dx = e.changedTouches[0].clientX - swipeStartX.current; swipeStartX.current = null;
-    if (Math.abs(dx)<40) return;
-    if (dx>0) setLbIndex(i=>(i-1+viewable.length)%viewable.length);
-    else setLbIndex(i=>(i+1)%viewable.length);
+    if (Math.abs(dx) < 40) return;
+    if (dx > 0) setLbIndex((i) => (i - 1 + viewable.length) % viewable.length);
+    else       setLbIndex((i) => (i + 1) % viewable.length);
   };
 
   /* ---------- Rendu ---------- */
-
   return (
     <main className="px-6 py-24 text-white">
       <h1 className="mb-2 text-3xl font-bold">Galerie</h1>
       <p className="mb-2 text-white/80">Photos, vidéos et documents du dossier Cloudinary <code>famille</code>.</p>
-      {errorMsg && <p className="mt-2 mb-4 text-red-300 text-sm">⚠️ {errorMsg}</p>}
+
+      <GalleryFolders />
 
       {/* Filtres haut */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="inline-flex gap-2 rounded-full border border-white/20 bg-black/30 p-1">
-          {(["all","images","videos","audio","documents"] as const).map(k => (
+          {(["all","images","videos","audio","documents"] as const).map((k) => (
             <Link
-              key={k} prefetch={false}
-              href={`/galerie?tab=${k}`}
-              onClick={()=>setTab(k)}
-              className={`rounded-full px-4 py-2 ${tab===k ? "bg-white/20" : "hover:bg-white/10"}`}
+              key={k}
+              prefetch={false}
+              href={`/galerie?tab=${k}&view=${searchParams.get("view") || "unassigned"}${searchParams.get("folderId") ? `&folderId=${searchParams.get("folderId")}` : ""}`}
+              onClick={() => setTab(k)}
+              className={`rounded-full px-4 py-2 ${tab === k ? "bg-white/20" : "hover:bg-white/10"}`}
             >
-              {k==="all" ? "Tout" : k==="images" ? "Photos" : k==="videos" ? "Vidéos" : k==="audio" ? "Audio" : "Documents"}
+              {k === "all" ? "Tout" : k === "images" ? "Photos" : k === "videos" ? "Vidéos" : k === "audio" ? "Audio" : "Documents"}
             </Link>
           ))}
         </div>
 
         {/* Recherche + tri + actions globales */}
         <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
-          <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher par titre…"
-            className="w-full rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none focus:ring-2 focus:ring-yellow-300/60 sm:w-72"/>
-          <select value={sort} onChange={e=>setSort(e.target.value as any)}
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Rechercher par titre…"
+            className="w-full rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none focus:ring-2 focus:ring-yellow-300/60 sm:w-72" />
+          <select value={sort} onChange={(e) => setSort(e.target.value as any)}
             className="rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none">
             <option value="newest">Plus récents</option>
             <option value="oldest">Plus anciens</option>
           </select>
-          <button onClick={fetchList} disabled={loading}
+          <button onClick={() => fetchList(true)} disabled={loading}
             className="rounded-lg border border-white/20 bg-black/30 px-3 py-2">
             {loading ? "Chargement…" : "Rafraîchir"}
           </button>
-          <button
-            onClick={toggleSelectAllVisible}
+          <button onClick={toggleSelectAllVisible}
             className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 hover:bg-white/20"
-            title="Sélectionner ou désélectionner tous les éléments visibles"
-          >
+            title="Sélectionner ou désélectionner tous les éléments visibles">
             {allVisibleSelected ? "Tout désélectionner (vue)" : "Tout sélectionner (vue)"}
           </button>
-          <button
-            onClick={downloadVisible}
+          <button onClick={downloadVisible}
             className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 hover:bg-white/20"
-            title="Télécharger tous les éléments visibles"
-          >
+            title="Télécharger tous les éléments visibles">
             Télécharger (vue)
           </button>
           <Link
-            href={`/admin/upload?rubric=${
-              tab==="images"?"Photos":tab==="videos"?"Vidéos":tab==="audio"?"Audio":tab==="documents"?"Documents":"Photos"
-            }`}
+            href={`/admin/upload?rubric=${tab === "images" ? "Photos" : tab === "videos" ? "Vidéos" : tab === "audio" ? "Audio" : tab === "documents" ? "Documents" : "Photos"}`}
             className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-center hover:bg-white/20">
             ➕ Ajouter des médias
           </Link>
@@ -370,21 +400,21 @@ export default function GaleriePage() {
               {selectedPublicIds.size} élément{selectedPublicIds.size > 1 ? "s" : ""} sélectionné{selectedPublicIds.size > 1 ? "s" : ""}
             </div>
             <div className="flex flex-wrap gap-2">
-              <button onClick={downloadSelected} className="rounded bg-blue-500 px-3 py-2 text-black hover:bg-blue-400">
-                Télécharger sélection
-              </button>
-              <button onClick={doDelete} className="rounded bg-red-500 px-3 py-2 text-black hover:bg-red-400">
-                Supprimer
-              </button>
-              <input value={moveFolder} onChange={e=>setMoveFolder(e.target.value)}
-                placeholder="Dossier cible (ex: famille/Photos/2025)"
+              <button onClick={downloadSelected} className="rounded bg-blue-500 px-3 py-2 text-black hover:bg-blue-400">Télécharger sélection</button>
+              <button onClick={doDelete} className="rounded bg-red-500 px-3 py-2 text-black hover:bg-red-400">Supprimer</button>
+              <input value={moveFolder} onChange={(e) => setMoveFolder(e.target.value)}
+                placeholder="Dossier Cloudinary (ex: famille/Photos/2025)"
                 className="rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none" />
-              <button onClick={doMove} className="rounded bg-yellow-500 px-3 py-2 text-black hover:bg-yellow-400">
-                Déplacer
-              </button>
-              <button onClick={clearSel} className="rounded border border-white/30 px-3 py-2 hover:bg-white/10">
-                Annuler
-              </button>
+              <button onClick={doMoveCloudinary} className="rounded bg-yellow-500 px-3 py-2 text-black hover:bg-yellow-400"
+                title="Déplacer physiquement dans Cloudinary">Déplacer (Cloudinary)</button>
+              <select value={assignFolderId} onChange={(e) => setAssignFolderId(e.target.value)}
+                className="rounded-lg border border-white/20 bg-black/30 px-3 py-2 outline-none" title="Affecter la sélection à un dossier applicatif">
+                <option value="">— Choisir un dossier —</option>
+                {folders.map((f) => (<option key={f.id} value={f.id}>{f.name}</option>))}
+              </select>
+              <button onClick={doAssignFolder} className="rounded bg-emerald-400 px-3 py-2 text-black hover:bg-emerald-300 disabled:opacity-50" disabled={!assignFolderId}>Affecter au dossier</button>
+              <button onClick={doUnassignFolder} className="rounded border border-white/30 px-3 py-2 hover:bg-white/10" title="Retirer la sélection de tout dossier">Retirer du dossier</button>
+              <button onClick={clearSel} className="rounded border border-white/30 px-3 py-2 hover:bg-white/10">Annuler</button>
             </div>
           </div>
         </div>
@@ -394,75 +424,66 @@ export default function GaleriePage() {
       {loading ? (
         <p className="mt-6 text-white/70">Chargement…</p>
       ) : items.length === 0 ? (
-        <div className="mt-6 text-white/80"><p>Aucun élément.</p></div>
+        <div className="mt-6 space-y-2 text-white/80">
+          {!!errorMsg && (
+            <p className="text-red-300">
+              ⚠️ {errorMsg}
+              {retryAt > Date.now() && <> — réessayez vers {new Date(retryAt).toLocaleTimeString()}</>}
+            </p>
+          )}
+          <p>Aucun élément.</p>
+          {(searchParams.get("view") || "unassigned").toLowerCase() === "unassigned" && (
+            <Link
+              prefetch={false}
+              href={`/galerie?tab=${getTabFromUrl()}&view=all${searchParams.get("folderId") ? `&folderId=${searchParams.get("folderId")}` : ""}`}
+              className="inline-block rounded border border-white/30 bg-white/10 px-3 py-1 hover:bg-white/20"
+            >
+              Voir tous les médias (dossier Cloudinary)
+            </Link>
+          )}
+        </div>
       ) : (
         <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-3">
-          {items.map(m => {
-            const isImg   = m.kind==="image";
-            const isVid   = m.kind==="video";
-            const isAudio = m.kind==="audio";
-            const isDoc   = m.kind==="document";
+          {items.map((m) => {
+            const isImg = m.kind === "image";
+            const isVid = m.kind === "video";
+            const isAudio = m.kind === "audio";
+            const isDoc = m.kind === "document";
             const ext = (m.format || "").toLowerCase();
 
             return (
               <div key={m.id} className="group relative overflow-hidden rounded-lg border border-white/20">
                 <label className="absolute left-2 top-2 z-10 inline-flex items-center gap-2 rounded bg-black/50 px-2 py-1 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={selectedPublicIds.has(m.public_id)}
-                    onChange={()=>toggleSel(m.public_id)}
-                  />
+                  <input type="checkbox" checked={selectedPublicIds.has(m.public_id)} onChange={() => toggleSel(m.public_id)} />
                   Sélection
                 </label>
 
                 <div className="aspect-video">
                   {isImg ? (
-                    <Image
-                      src={m.thumb ?? m.url}
-                      alt={m.title}
-                      width={800} height={600}
+                    <Image src={m.thumb ?? m.url} alt={m.title} width={800} height={600}
                       className="h-full w-full cursor-zoom-in object-cover transition-transform duration-300 group-hover:scale-105"
-                      onClick={()=>openLightboxFor(m.id)}
-                      unoptimized
-                    />
+                      onClick={() => openLightboxFor(m.id)} unoptimized />
                   ) : isVid ? (
                     isYouTube(m.url) ? (
-                      <iframe src={m.url.replace("watch?v=", "embed/")} className="h-full w-full"
-                              allow="autoplay; encrypted-media" allowFullScreen />
+                      <iframe src={m.url.replace("watch?v=", "embed/")} className="h-full w-full" allow="autoplay; encrypted-media" allowFullScreen />
                     ) : (
-                      <video src={m.url} className="h-full w-full cursor-zoom-in object-cover"
-                             preload="metadata" muted playsInline onClick={()=>openLightboxFor(m.id)} />
+                      <video src={m.url} className="h-full w-full cursor-zoom-in object-cover" preload="metadata" muted playsInline onClick={() => openLightboxFor(m.id)} />
                     )
                   ) : isAudio ? (
-                    <button
-                      onClick={()=>openLightboxFor(m.id)}
-                      className="grid h-full w-full place-items-center bg-white/5 text-white/90"
-                      title="Écouter"
-                    >
-                      <div className="text-base sm:text-lg">🎵 {m.title || (m.public_id.split("/").pop() || "Audio")}</div>
+                    <button onClick={() => openLightboxFor(m.id)} className="grid h-full w-full place-items-center bg-white/5 text-white/90" title="Écouter">
+                      <div className="text-base sm:text-lg">🎵 {m.title || m.public_id.split("/").pop() || "Audio"}</div>
                     </button>
                   ) : isDoc ? (
-                    <button
-                      onClick={()=>openLightboxFor(m.id)}
-                      className="grid h-full w-full place-items-center bg-white/5 text-white/90"
-                      title="Ouvrir"
-                    >
-                      <div className="text-base sm:text-lg">
-                        {docEmoji(ext)} {m.title}{ext?`.${ext}`:""}
-                      </div>
+                    <button onClick={() => openLightboxFor(m.id)} className="grid h-full w-full place-items-center bg-white/5 text-white/90" title="Ouvrir">
+                      <div className="text-base sm:text-lg">{docEmoji(ext)} {m.title}{ext ? `.${ext}` : ""}</div>
                     </button>
                   ) : null}
                 </div>
 
-                {/* action rapide DL audio/doc */}
                 {(isDoc || isAudio) && (
                   <div className="absolute right-2 top-2 z-10">
-                    <a
-                      href={downloadUrl(m)}
-                      className="rounded bg-white/80 px-2 py-1 text-xs text-black hover:bg-white"
-                      title="Télécharger"
-                      target="_blank" rel="noopener noreferrer"
-                    >
+                    <a href={downloadUrl(m)} className="rounded bg-white/80 px-2 py-1 text-xs text-black hover:bg-white"
+                      title="Télécharger" target="_blank" rel="noopener noreferrer">
                       Télécharger
                     </a>
                   </div>
@@ -473,53 +494,32 @@ export default function GaleriePage() {
         </div>
       )}
 
-      {/* Lightbox (images/vidéos/audio/documents) */}
-      {lbOpen && viewable.length>0 && (
+      {/* Lightbox */}
+      {lbOpen && viewable.length > 0 && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4"
-             onClick={()=>setLbOpen(false)} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
-          <div className="relative w-full max-w-6xl max-h-[90vh]" onClick={(e)=>e.stopPropagation()}>
+          onClick={() => setLbOpen(false)} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+          <div className="relative w-full max-w-6xl max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
             <div className="absolute right-2 top-2 z-10 flex items-center gap-2">
-              <div className="rounded-full bg-black/60 px-3 py-1 text-sm">{lbIndex+1} / {viewable.length}</div>
-              <a href={downloadUrl(viewable[lbIndex])} target="_blank" rel="noopener noreferrer"
-                 className="rounded bg-white/80 px-3 py-1 text-sm text-black hover:bg-white">
-                Télécharger
-              </a>
-              <a href={openUrl(viewable[lbIndex])} target="_blank" rel="noopener noreferrer"
-                 className="rounded bg-white/80 px-3 py-1 text-sm text-black hover:bg-white">
-                Ouvrir
-              </a>
+              <div className="rounded-full bg-black/60 px-3 py-1 text-sm">{lbIndex + 1} / {viewable.length}</div>
+              <a href={downloadUrl(viewable[lbIndex])} target="_blank" rel="noopener noreferrer" className="rounded bg-white/80 px-3 py-1 text-sm text-black hover:bg-white">Télécharger</a>
+              <a href={openUrl(viewable[lbIndex])}     target="_blank" rel="noopener noreferrer" className="rounded bg-white/80 px-3 py-1 text-sm text-black hover:bg-white">Ouvrir</a>
             </div>
-            <button onClick={()=>setLbOpen(false)}
-                    className="absolute left-2 top-2 z-10 rounded-full border border-white/30 bg-black/40 px-3 py-1">✕</button>
-            <button onClick={()=>setLbIndex(i=>(i-1+viewable.length)%viewable.length)}
-                    className="absolute left-2 top-1/2 z-10 h-12 w-12 -translate-y-1/2 grid place-items-center rounded-full bg-black/60 text-2xl hover:bg-black/80">←</button>
-            <button onClick={()=>setLbIndex(i=>(i+1)%viewable.length)}
-                    className="absolute right-2 top-1/2 z-10 h-12 w-12 -translate-y-1/2 grid place-items-center rounded-full bg-black/60 text-2xl hover:bg-black/80">→</button>
+            <button onClick={() => setLbOpen(false)} className="absolute left-2 top-2 z-10 rounded-full border border-white/30 bg-black/40 px-3 py-1">✕</button>
+            <button onClick={() => setLbIndex((i) => (i - 1 + viewable.length) % viewable.length)} className="absolute left-2 top-1/2 z-10 h-12 w-12 -translate-y-1/2 grid place-items-center rounded-full bg-black/60 text-2xl hover:bg-black/80">←</button>
+            <button onClick={() => setLbIndex((i) => (i + 1) % viewable.length)} className="absolute right-2 top-1/2 z-10 h-12 w-12 -translate-y-1/2 grid place-items-center rounded-full bg-black/60 text-2xl hover:bg-black/80">→</button>
 
             <div className="overflow-hidden rounded-lg border border-white/20 bg-black/40">
               {(() => {
                 const cur = viewable[lbIndex];
                 const ext = (cur.format || "").toLowerCase();
 
-                if (cur.kind === "image") {
-                  return <Image src={cur.url} alt={cur.title} width={1200} height={800} className="w-full max-h-[80vh] object-contain" unoptimized />;
-                }
-                if (isYouTube(cur.url)) {
-                  return <iframe src={cur.url.replace("watch?v=", "embed/")} className="h-[80vh] w-full" allow="autoplay; encrypted-media" allowFullScreen />;
-                }
-                if (cur.kind === "video") {
-                  return <video src={cur.url} className="w-full max-h-[80vh] object-contain" controls autoPlay playsInline />;
-                }
+                if (cur.kind === "image")      return <Image src={cur.url} alt={cur.title} width={1200} height={800} className="w-full max-h-[80vh] object-contain" unoptimized />;
+                if (isYouTube(cur.url))        return <iframe src={cur.url.replace("watch?v=", "embed/")} className="h-[80vh] w-full" allow="autoplay; encrypted-media" allowFullScreen />;
+                if (cur.kind === "video")      return <video src={cur.url} className="w-full max-h-[80vh] object-contain" controls autoPlay playsInline />;
                 if (cur.kind === "audio") {
                   const src = openUrl(cur, ext || "mp3");
-                  return (
-                    <div className="grid h-[30vh] w-full place-items-center bg-black">
-                      <audio src={src} controls autoPlay className="w-[90%]" />
-                    </div>
-                  );
+                  return (<div className="grid h-[30vh] w-full place-items-center bg-black"><audio src={src} controls autoPlay className="w-[90%]" /></div>);
                 }
-
-                // Documents :
                 if (ext === "pdf") {
                   const pdfUrl = apiFile(cur.public_id, { format: "pdf", dl: 0, filename: sanitizeName((cur.title || "document") + ".pdf") });
                   return <iframe src={pdfUrl} className="h-[80vh] w-full bg-white" title={cur.title || "PDF"} />;

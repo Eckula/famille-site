@@ -1,0 +1,44 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+/**
+ * ========== Dossiers & index médias (sans familyId) ==========
+ */
+
+model Folder {
+  id       String   @id @default(cuid())
+  name     String
+  parentId String?
+  parent   Folder?  @relation("FolderChildren", fields: [parentId], references: [id])
+  children Folder[] @relation("FolderChildren")
+
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  media MediaIndex[]
+
+  @@unique([parentId, name]) // nom unique dans un même dossier
+  @@index([parentId])
+}
+
+model MediaIndex {
+  id       String  @id @default(cuid())
+  publicId String // Cloudinary public_id
+  folderId String?
+  folder   Folder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+
+  createdBy String?
+  createdAt DateTime @default(now())
+
+  @@unique([publicId]) // un asset = 1 ligne dans l’index
+  @@index([folderId])
+}

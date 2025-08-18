@@ -1,50 +1,71 @@
 // app/api/media/move/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { v2 as cloudinary } from "cloudinary";
+import { requireAdmin } from "../../_admin";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const revalidate = 0;
 
-import { NextResponse } from "next/server";
-import { v2 as cloudinary } from "cloudinary";
+const ok = (data: any, status = 200) =>
+  NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });
 
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key:    process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
-
-async function findResource(public_id: string) {
-  // essaie image, video, raw
-  for (const rt of ["image","video","raw"] as const) {
-    try {
-      const res = await cloudinary.api.resource(public_id, { resource_type: rt });
-      return { rt, res };
-    } catch {}
-  }
-  throw new Error(`Introuvable: ${public_id}`);
+function ensureCloudinary() {
+  const cn = process.env.CLOUDINARY_CLOUD_NAME || process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
+  const ak = process.env.CLOUDINARY_API_KEY;
+  const as = process.env.CLOUDINARY_API_SECRET;
+  if (!cn || !ak || !as) throw new Error("Cloudinary: variables manquantes (cloud_name/api_key/api_secret).");
+  cloudinary.config({ cloud_name: cn, api_key: ak, api_secret: as, secure: true });
 }
 
-export async function POST(req: Request) {
+function baseName(pid: string) {
+  const parts = pid.split("/");
+  return parts[parts.length - 1];
+}
+
+export async function POST(req: NextRequest) {
+  // 🔒 Admin requis
+  const deny = await requireAdmin(req);
+  if (deny) return deny;
+
   try {
-    const { ids, toFolder }:{ ids:string[]; toFolder:string } = await req.json();
-    if (!ids?.length || !toFolder) return NextResponse.json({ error: "ids/toFolder requis" }, { status: 400 });
+    ensureCloudinary();
+    const { public_ids, ids, toFolder } = await req.json();
+    const list: string[] = Array.isArray(public_ids) ? public_ids : (Array.isArray(ids) ? ids : []);
+    const target = String(toFolder || "").trim().replace(/\/+$/, "");
+    if (!list.length) return ok({ error: "Aucun public_id fourni." }, 400);
+    if (!target) return ok({ error: "toFolder requis." }, 400);
 
-    const results:any[] = [];
-    for (const id of ids) {
-      // id peut être asset_id ou public_id, on privilégie public_id
-      let public_id = id;
-      // si on reçoit un asset_id côté client, adapte ici (optionnel)
+    const moved: string[] = [];
+    const skipped: string[] = [];
+    const errors: Array<{ id: string; error: string }> = [];
 
-      const { rt, res } = await findResource(public_id);
-      const base = (res.public_id as string).split("/").pop()!;
-      const target = `${toFolder.replace(/\/+$/,"")}/${base}`;
+    for (const pid of list) {
+      const toId = `${target}/${baseName(pid)}`;
+      let done = false;
 
-      const moved = await cloudinary.uploader.rename(res.public_id, target, {
-        resource_type: rt, overwrite: true,
-      });
-      results.push({ from: res.public_id, to: target, rt, moved });
+      // On essaie pour chaque resource_type
+      for (const rt of ["image", "video", "raw"] as const) {
+        try {
+          // @ts-ignore
+          const res = await cloudinary.uploader.rename(pid, toId, { resource_type: rt, overwrite: false });
+          if (res?.public_id) { moved.push(pid); done = true; break; }
+        } catch (e: any) {
+          const msg = e?.error?.message || e?.message || "";
+          if (!/not found/i.test(msg)) {
+            // autre erreur que "pas trouvé", on la stocke
+            errors.push({ id: pid, error: msg || "rename error" });
+            done = true; // on arrête d'essayer d'autres types pour celui-ci
+            break;
+          }
+          // sinon on tente avec le type suivant
+        }
+      }
+
+      if (!done) skipped.push(pid);
     }
-    return NextResponse.json({ ok:true, results });
-  } catch (e:any) {
-    return NextResponse.json({ error: e?.message || String(e) }, { status: 500 });
+
+    return ok({ ok: true, moved: moved.length, skipped: skipped.length, errors, details: { moved, skipped } });
+  } catch (e: any) {
+    return ok({ error: e?.message || "Erreur déplacement Cloudinary." }, 400);
   }
 }

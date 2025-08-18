@@ -6,7 +6,7 @@ import WeatherWidget from "./components/WeatherWidget";
 
 export const metadata = {
   title: "Famille Merenge — Accueil",
-  description: "Site familial moderne : photos, vidéos, événements.",
+  description: "Site familial: photos, vidéos, événements et souvenirs.",
 };
 
 export default function RootLayout({ children }) {
