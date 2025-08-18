@@ -8,7 +8,7 @@ type Folder = { id: string; name: string; parentId: string | null; createdAt: st
 
 export default function GalleryFolders() {
   const router = useRouter();
-  const sp = useSearchParams(); // peut être null selon les types Next 15
+  const sp = useSearchParams(); // peut être null selon Next 15
 
   const [folders, setFolders]   = useState<Folder[]>([]);
   const [creating, setCreating] = useState(false);
@@ -19,7 +19,7 @@ export default function GalleryFolders() {
   const [renamingId, setRenamingId]   = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
 
-  // ✅ null-safe sur sp
+  // ✅ null-safe
   const view = (sp?.get("view") ?? "unassigned").toLowerCase();
   const folderId = sp?.get("folderId") ?? "";
 
@@ -130,7 +130,6 @@ export default function GalleryFolders() {
       }
       cancelRename();
       await refresh();
-      // si on regarde ce dossier, l'intitulé se mettra à jour via la liste
       if (view === "folder" && folderId === id) {
         const url = new URL(window.location.href);
         router.replace(url.toString());
@@ -154,7 +153,7 @@ export default function GalleryFolders() {
         </button>
       </div>
 
-      {/* Liste des dossiers / accès rapides */}
+      {/* Liste des dossiers */}
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <button onClick={goUnassigned} className="rounded bg-white/10 px-3 py-1 hover:bg-white/20">
           Mes fichiers
@@ -173,8 +172,6 @@ export default function GalleryFolders() {
                   >
                     <span role="img" aria-label="folder">📁</span> {f.name}
                   </button>
-
-                  {/* Bouton renommer */}
                   <button
                     onClick={()=>startRename(f)}
                     className="rounded p-1 hover:bg-white/10"
@@ -186,8 +183,6 @@ export default function GalleryFolders() {
                         d="M4 20h4l10.5-10.5a1.5 1.5 0 0 0 0-2.121l-1.879-1.879a1.5 1.5 0 0 0-2.121 0L4 14v6zM15 6l3 3" />
                     </svg>
                   </button>
-
-                  {/* Bouton supprimer */}
                   <button
                     onClick={()=>deleteFolder(f.id)}
                     disabled={deleting === f.id}
@@ -214,18 +209,10 @@ export default function GalleryFolders() {
                     }}
                     className="rounded border border-white/30 bg-black/30 px-2 py-0.5 outline-none"
                   />
-                  <button
-                    onClick={confirmRename}
-                    className="rounded px-2 py-0.5 hover:bg-emerald-500/10"
-                    title="Valider"
-                  >
+                  <button onClick={confirmRename} className="rounded px-2 py-0.5 hover:bg-emerald-500/10" title="Valider">
                     ✔︎
                   </button>
-                  <button
-                    onClick={cancelRename}
-                    className="rounded px-2 py-0.5 hover:bg-white/10"
-                    title="Annuler"
-                  >
+                  <button onClick={cancelRename} className="rounded px-2 py-0.5 hover:bg-white/10" title="Annuler">
                     ✕
                   </button>
                 </>
