@@ -6,7 +6,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const LINKS = [
-  { href: "/", label: "Galerie" },
+  // ✅ Galerie pointe maintenant vers /galerie?tab=all&view=unassigned
+  { href: "/galerie?tab=all&view=unassigned", label: "Galerie" },
   { href: "/photos", label: "Photos" },
   { href: "/videos", label: "Vidéos" },
   { href: "/documents", label: "Documents" },
@@ -29,11 +30,14 @@ export default function Nav() {
           {/* Liens (desktop) */}
           <div className="hidden gap-3 md:flex">
             {LINKS.map((l) => {
-              const active = pathname === l.href;
+              // ✅ Active state robuste même si l.href a des query params
+              const targetPath = l.href.split("?")[0];
+              const active = pathname === targetPath;
               return (
                 <Link
                   key={l.href}
                   href={l.href}
+                  prefetch={false}
                   className={`rounded-full px-3 py-1.5 hover:bg-white/10 ${active ? "bg-white/10" : ""}`}
                 >
                   {l.label}
@@ -42,7 +46,7 @@ export default function Nav() {
             })}
           </div>
 
-          {/* Titre centré */}
+          {/* Titre centré (laisse / ; si tu veux, remplace par /galerie?tab=all&view=unassigned) */}
           <Link href="/" className="text-center text-lg font-semibold">
             Famille Merenge — Accueil
           </Link>
@@ -73,15 +77,20 @@ export default function Nav() {
         {open && (
           <div className="mt-2 rounded-2xl border border-white/25 bg-black/70 p-2 text-white backdrop-blur md:hidden">
             <div className="grid gap-1">
-              {LINKS.map((l) => (
-                <Link
-                  key={l.href}
-                  href={l.href}
-                  className={`rounded-lg px-3 py-2 hover:bg-white/10 ${pathname === l.href ? "bg-white/10" : ""}`}
-                >
-                  {l.label}
-                </Link>
-              ))}
+              {LINKS.map((l) => {
+                const targetPath = l.href.split("?")[0];
+                const active = pathname === targetPath;
+                return (
+                  <Link
+                    key={l.href}
+                    href={l.href}
+                    prefetch={false}
+                    className={`rounded-lg px-3 py-2 hover:bg-white/10 ${active ? "bg-white/10" : ""}`}
+                  >
+                    {l.label}
+                  </Link>
+                );
+              })}
               <Link href="/admin" className="rounded-lg px-3 py-2 hover:bg-white/10">
                 Admin
               </Link>

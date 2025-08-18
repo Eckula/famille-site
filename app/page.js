@@ -1,3 +1,4 @@
+// app/accueil/page.js
 import Link from "next/link";
 import Image from "next/image";
 
@@ -27,7 +28,7 @@ const cards = [
     img: "/images/albums.jpg"   
   },
   { 
-    title: "Documents", /* correction → filtre direct */
+    title: "Documents",
     desc: "PDF et fichiers partagés.", 
     href: "/galerie?tab=documents",     
     img: "/images/docs.jpg"     
@@ -61,7 +62,6 @@ export default function HomePage() {
             href={c.href}
             className="group relative overflow-hidden rounded-2xl border border-white/25 bg-white/5 shadow-sm hover:shadow-lg transition"
           >
-            {/* Image optimisée */}
             <div className="aspect-video w-full overflow-hidden">
               <Image
                 src={c.img}
@@ -72,12 +72,10 @@ export default function HomePage() {
               />
             </div>
 
-            {/* Dégradé bas */}
             <div className="absolute inset-0 pointer-events-none">
               <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/70 to-transparent" />
             </div>
 
-            {/* Texte */}
             <div className="absolute bottom-0 left-0 right-0 p-4">
               <h2 className="text-xl font-semibold drop-shadow">{c.title}</h2>
               <p className="text-sm text-white/90">{c.desc}</p>
