@@ -4,9 +4,12 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "prebuild": "node scripts/fixPrismaImports.mjs",
+    "build": "prisma generate && next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "postinstall": "prisma generate",
+    "fix:prisma": "node scripts/fixPrismaImports.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.14.0",
