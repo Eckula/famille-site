@@ -5,40 +5,40 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:./dev.db"
+  provider  = "postgresql"
+  // Pool (Prisma Accelerate) — DOIT pointer sur PRISMA_DATABASE_URL
+  url       = env("PRISMA_DATABASE_URL")
+  // Connexion directe (migrations) — on réutilise DATABASE_URL (pas besoin de DIRECT_URL séparé)
+  directUrl = env("DATABASE_URL")
 }
 
-/**
- * ========== Dossiers & index médias (sans familyId) ==========
- */
+/** ====== Modèles ====== **/
 
 model Folder {
-  id       String   @id @default(cuid())
-  name     String
-  parentId String?
-  parent   Folder?  @relation("FolderChildren", fields: [parentId], references: [id])
-  children Folder[] @relation("FolderChildren")
+  id        String    @id @default(cuid())
+  name      String
+  parentId  String?
+  parent    Folder?   @relation("FolderChildren", fields: [parentId], references: [id])
+  children  Folder[]  @relation("FolderChildren")
 
   createdBy String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
-  media MediaIndex[]
+  media     MediaIndex[]
 
-  @@unique([parentId, name]) // nom unique dans un même dossier
+  @@unique([parentId, name])  // nom unique dans un même dossier
   @@index([parentId])
 }
 
 model MediaIndex {
-  id       String  @id @default(cuid())
-  publicId String // Cloudinary public_id
-  folderId String?
-  folder   Folder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  id        String   @id @default(cuid())
+  publicId  String   @unique
+  folderId  String?
+  folder    Folder?  @relation(fields: [folderId], references: [id], onDelete: SetNull)
 
   createdBy String?
   createdAt DateTime @default(now())
 
-  @@unique([publicId]) // un asset = 1 ligne dans l’index
   @@index([folderId])
 }
