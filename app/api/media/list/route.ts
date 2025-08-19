@@ -1,271 +1,309 @@
 // app/api/media/list/route.ts
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 import { NextRequest, NextResponse } from "next/server";
 import { v2 as cloudinary } from "cloudinary";
 import { PrismaClient } from "@prisma/client";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+/**
+ * Paramètres supportés (GET):
+ *  - folder: chemin Cloudinary (EX: "famille/Evenements/2024-04_anniv")
+ *  - folderId: (LEGACY) id DB → on résout en public_ids via Prisma, puis lookup par lots
+ *  - tab: images | videos | audio | documents | all (defaut: all)
+ *  - page: next_cursor (pagination)
+ *  - perPage: max 100 (defaut: 60)
+ *  - q: filtre simple (public_id / filename) — uniquement pour folder/folderId (client-side)
+ *  - sort: created_desc | created_asc (defaut: created_desc)
+ */
 
 const prisma = new PrismaClient();
 
 const ROOT = (process.env.CLOUDINARY_ROOT_FOLDER || "famille").trim();
-const MAX  = Math.min(Number(process.env.MEDIA_MAX_RESULTS || 5000), 5000);
-const TTL  = Math.max(30, Number(process.env.MEDIA_CACHE_TTL_SECONDS || 120)) * 1000; // 120s
-const AUDIO = ["mp3","m4a","aac","wav","flac","ogg","oga"];
+const MEDIA_TTL_MS = Number(process.env.MEDIA_LIST_TTL_MS || 5 * 60 * 1000); // 5 min
+const MAX_RESULTS = 100;
 
-/* ---------------- HTTP ---------------- */
-const ok = (data: any, status = 200) =>
-  NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });
+type Kind = "image" | "video" | "audio" | "document";
 
+// -------------------- Cloudinary config --------------------
 function ensureCloudinary() {
-  const cn = process.env.CLOUDINARY_CLOUD_NAME || process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
+  const cn =
+    process.env.CLOUDINARY_CLOUD_NAME ||
+    process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
   const ak = process.env.CLOUDINARY_API_KEY;
   const as = process.env.CLOUDINARY_API_SECRET;
-  if (!cn || !ak || !as) throw new Error("Cloudinary: variables manquantes (cloud_name/api_key/api_secret).");
+  if (!cn || !ak || !as)
+    throw new Error(
+      "Cloudinary: variables manquantes (cloud_name/api_key/api_secret)."
+    );
   cloudinary.config({ cloud_name: cn, api_key: ak, api_secret: as, secure: true });
 }
 
-/* --------------- Cache + cooldown (mémoire process) --------------- */
-type CacheEntry<T=any> = { ts: number; data: T };
-const searchCache = new Map<string, CacheEntry<any[]>>();  // "search:<expr>"
-const adminCache  = new Map<string, CacheEntry<any[]>>();  // "admin:<prefix|<all>>"
-const folderCache = new Map<string, CacheEntry<any[]>>();  // "folder:<folderId>:<tab>"
+// ---------------------- Cache mémoire ----------------------
+type CacheEntry = { at: number; payload: any };
+const CACHE = new Map<string, CacheEntry>();
 
-// horodatage UTC (ms) jusqu’auquel on évite d’appeler Cloudinary
-let cooldownUntil = 0;
-
-function getCache<T>(map: Map<string, CacheEntry<T>>, key: string): T | null {
-  const e = map.get(key);
+function normKey(u: URL) {
+  const x = new URL(u.toString());
+  x.searchParams.delete("ts");
+  return x.pathname + "?" + x.searchParams.toString();
+}
+function getCache(key: string) {
+  const e = CACHE.get(key);
   if (!e) return null;
-  if (Date.now() - e.ts > TTL) return null;
-  return e.data;
+  if (Date.now() - e.at > MEDIA_TTL_MS) return null;
+  return e.payload;
 }
-function setCache<T>(map: Map<string, CacheEntry<T>>, key: string, data: T) {
-  map.set(key, { ts: Date.now(), data });
-}
-
-function parseRetryAt(msg: string): number | null {
-  // ex: "Try again on 2025-08-18 19:00:00 UTC"
-  const m = /Try again on ([0-9-]{10}) ([0-9:]{8}) UTC/i.exec(msg);
-  if (!m) return null;
-  const iso = `${m[1]}T${m[2]}Z`;
-  const t = Date.parse(iso);
-  return Number.isFinite(t) ? t : null;
-}
-function markCooldownFrom(msg: string) {
-  const t = parseRetryAt(msg);
-  cooldownUntil = Math.max(cooldownUntil, t ?? (Date.now() + 2 * 60_000)); // 2 min par défaut
+function setCache(key: string, payload: any) {
+  CACHE.set(key, { at: Date.now(), payload });
 }
 
-/* ---------------- Cloudinary wrappers tolérants ---------------- */
-async function safeSearch(expr: string, max = MAX) {
-  const key = `search:${expr}`;
-  const cached = getCache(searchCache, key);
-  if (Date.now() < cooldownUntil) return cached ?? [];
-
-  try {
-    const out: any[] = [];
-    let cursor: string | undefined;
-    while (out.length < max) {
-      // @ts-ignore
-      const q = cloudinary.search.expression(expr).sort_by("created_at","desc").max_results(500);
-      if (cursor) (q as any).next_cursor(cursor);
-      const res = await q.execute();
-      out.push(...(Array.isArray(res?.resources) ? res.resources : []));
-      cursor = res?.next_cursor;
-      if (!cursor) break;
-    }
-    const trimmed = out.slice(0, max);
-    setCache(searchCache, key, trimmed);
-    return trimmed;
-  } catch (e: any) {
-    const msg = e?.error?.message || e?.message || String(e);
-    if (/rate limit/i.test(msg)) markCooldownFrom(msg);
-    console.error("[cloudinary.search]", msg);
-    return cached ?? [];
-  }
+function ok(payload: any, ttl = MEDIA_TTL_MS) {
+  return NextResponse.json(payload, {
+    headers: { "Cache-Control": `s-maxage=${Math.floor(ttl / 1000)}` },
+  });
+}
+function err(status: number, message: string, extra?: any) {
+  return NextResponse.json({ error: message, ...extra }, { status });
 }
 
-async function adminList(prefix?: string) {
-  const key = `admin:${prefix || "<all>"}`;
-  const cached = getCache(adminCache, key);
-  if (Date.now() < cooldownUntil) return cached ?? [];
-
-  const all: any[] = [];
-  const combos: Array<{ resource_type: "image"|"video"|"raw"; type: "upload" }> = [
-    { resource_type: "image", type: "upload" },
-    { resource_type: "video", type: "upload" },
-    { resource_type: "raw",   type: "upload"  },
-  ];
-
-  for (const c of combos) {
-    let nc: string | undefined;
-    do {
-      try {
-        // @ts-ignore
-        const res = await cloudinary.api.resources({ ...c, ...(prefix ? { prefix } : {}), max_results: 500, next_cursor: nc });
-        if (Array.isArray(res?.resources)) all.push(...res.resources);
-        nc = res?.next_cursor;
-      } catch (e: any) {
-        const msg = e?.error?.message || e?.message || String(e);
-        if (/rate limit/i.test(msg)) markCooldownFrom(msg);
-        console.error("[cloudinary.api.resources]", prefix || "<all>", msg);
-        setCache(adminCache, key, all); // partiel/vidé → on met en cache l’état courant
-        return all;
-      }
-    } while (nc && all.length < MAX);
-  }
-  const trimmed = all.slice(0, MAX);
-  setCache(adminCache, key, trimmed);
-  return trimmed;
+// ---------------------- Utils mapping ----------------------
+const AUDIO_EXT = ["mp3", "m4a", "aac", "wav", "flac", "ogg", "oga"];
+function guessKind(rt: string, fmt?: string): Kind {
+  const f = (fmt || "").toLowerCase();
+  if (rt === "image") return f === "pdf" ? "document" : "image";
+  if (rt === "video") return AUDIO_EXT.includes(f) ? "audio" : "video";
+  return "document";
 }
-
-/** Récupération par IDs — très peu d’appels (<= 3 par lot de 100). */
-async function resourcesByIds(publicIds: string[]) {
-  const uniq = Array.from(new Set(publicIds.filter(Boolean)));
-  const results = new Map<string, any>();
-  let rateLimited = false;
-
-  if (Date.now() < cooldownUntil) {
-    return { items: [] as any[], rateLimited: true };
-  }
-
-  const chunkSize = 100;
-  for (let i = 0; i < uniq.length; i += chunkSize) {
-    const chunk = uniq.slice(i, i + chunkSize);
-    for (const rt of ["image","video","raw"] as const) {
-      try {
-        // @ts-ignore
-        const res = await cloudinary.api.resources_by_ids(chunk, { resource_type: rt, type: "upload" });
-        const arr = Array.isArray(res?.resources) ? res.resources : (Array.isArray(res) ? res : []);
-        for (const r of arr) results.set(r.public_id, r);
-      } catch (e: any) {
-        const msg = e?.error?.message || e?.message || String(e);
-        if (/rate limit/i.test(msg)) { markCooldownFrom(msg); rateLimited = true; }
-        console.error("[cloudinary.api.resources_by_ids]", rt, msg);
-      }
-    }
-  }
-  return { items: Array.from(results.values()), rateLimited };
-}
-
-/* ---------------- mapping & filtres ---------------- */
-function normalize(x: any) {
-  const public_id: string = x.public_id;
-  const url: string = x.secure_url || x.url || "";
-  const format = String(x.format || "").toLowerCase();
-  const rt = String(x.resource_type || "image").toLowerCase() as "image"|"video"|"raw";
-  const folder = (x.folder || public_id.split("/").slice(0, -1).join("/")) || "";
-
-  let kind: "image"|"video"|"audio"|"document";
-  if (rt === "image")      kind = format === "pdf" ? "document" : "image";
-  else if (rt === "video") kind = AUDIO.includes(format) ? "audio" : "video";
-  else                     kind = "document";
-
+function mapItem(r: any) {
+  const rt = (r.resource_type || "image").toLowerCase();
+  const kind = guessKind(rt, r.format);
+  const url = r.secure_url || r.url;
   return {
-    id: x.asset_id || public_id,
-    public_id,
-    kind,
-    title: x.original_filename || public_id.split("/").pop() || "",
+    public_id: r.public_id as string,
+    title: (r.original_filename as string) || (r.public_id as string),
     url,
-    thumb: x.thumbnail_url || x.secure_url || url,
-    createdAt: x.created_at || new Date().toISOString(),
-    format,
-    folder,
-    resource_type: rt,
+    thumb:
+      kind === "image" ? url : kind === "video" ? r.thumbnail_url || url : undefined,
+    format: r.format as string | undefined,
+    kind,
+    createdAt: r.created_at as string | undefined,
   };
 }
-
 function filterByTab(list: any[], tab: string) {
-  switch ((tab || "all").toLowerCase()) {
-    case "images":    return list.filter((i) => i.kind === "image");
-    case "videos":    return list.filter((i) => i.kind === "video");
-    case "audio":     return list.filter((i) => i.kind === "audio");
-    case "documents": return list.filter((i) => i.kind === "document");
-    default:          return list;
+  switch (tab) {
+    case "images":
+      return list.filter((x) => x.kind === "image");
+    case "videos":
+      return list.filter((x) => x.kind === "video");
+    case "audio":
+      return list.filter((x) => x.kind === "audio");
+    case "documents":
+      return list.filter((x) => x.kind === "document");
+    default:
+      return list;
   }
 }
 
-/* ---------------- handler ---------------- */
+// --------------- Impl 1: listing par *folder* (prefix) ---------------
+async function listByFolderPrefix(opts: {
+  folder: string;
+  tab: string;
+  page?: string;
+  perPage: number;
+  sortDir: "asc" | "desc";
+}) {
+  const { folder, tab, page, perPage, sortDir } = opts;
+
+  const base = {
+    type: "upload" as const,
+    prefix: `${folder}/`,
+    max_results: Math.min(perPage, MAX_RESULTS),
+    next_cursor: page,
+    direction: sortDir,
+  };
+
+  // on limite les appels: 1 type par onglet, et pour "all" on fusionne image+video+raw (3 appels max)
+  const kinds: Array<"image" | "video" | "raw"> =
+    tab === "images"
+      ? ["image"]
+      : tab === "videos"
+      ? ["video"]
+      : tab === "audio" || tab === "documents"
+      ? ["raw"]
+      : ["image", "video", "raw"];
+
+  let resources: any[] = [];
+  let next: string | undefined;
+
+  for (const rt of kinds) {
+    const res = await cloudinary.api.resources({
+      ...base,
+      resource_type: rt,
+    });
+    if (Array.isArray(res?.resources)) resources.push(...res.resources);
+    // s’il y a une pagination, on expose le next_cursor du *premier* type appelé
+    next = next || res?.next_cursor;
+  }
+
+  // pour "all", on trie localement par date
+  if (kinds.length > 1) {
+    const dir = sortDir === "asc" ? 1 : -1;
+    resources.sort(
+      (a, b) =>
+        dir *
+        (+new Date(a.created_at as string) - +new Date(b.created_at as string))
+    );
+    resources = resources.slice(0, perPage);
+  }
+
+  return { items: resources.map(mapItem), next };
+}
+
+// ----------- Impl 2: listing par *folderId* (legacy + DB) ------------
+async function listByFolderId(opts: {
+  folderId: string;
+  tab: string;
+  page?: string; // ignoré ici
+  perPage: number; // ignoré ici (on renvoie tout)
+}) {
+  const { folderId, tab } = opts;
+
+  const rows = await prisma.mediaIndex.findMany({
+    where: { folderId },
+    select: { publicId: true },
+  });
+  const ids = Array.from(new Set(rows.map((r) => r.publicId)));
+
+  // on réduit drastiquement le nombre d’appels: on tente image → video → raw,
+  // mais on ne repose PAS les IDs déjà trouvés.
+  const left = new Set(ids);
+  const found: any[] = [];
+
+  async function byIds(rt: "image" | "video" | "raw") {
+    const chunk = 100;
+    const arr = Array.from(left);
+    for (let i = 0; i < arr.length; i += chunk) {
+      const idsChunk = arr.slice(i, i + chunk);
+      if (!idsChunk.length) break;
+      try {
+        const res = await cloudinary.api.resources_by_ids(idsChunk, {
+          resource_type: rt,
+          type: "upload",
+        } as any);
+        const list = Array.isArray(res?.resources)
+          ? res.resources
+          : Array.isArray(res)
+          ? res
+          : [];
+        for (const r of list) {
+          found.push(r);
+          left.delete(r.public_id);
+        }
+      } catch (e: any) {
+        const msg = e?.error?.message || e?.message || String(e);
+        // en cas de rate limit: on retourne ce qu'on a déjà (cache côté route appelante)
+        if (/rate\s*limit/i.test(msg)) break;
+      }
+    }
+  }
+
+  await byIds("image");
+  if (left.size) await byIds("video");
+  if (left.size) await byIds("raw");
+
+  let items = found.map(mapItem);
+  items = filterByTab(items, tab);
+  return { items };
+}
+
+// --------------------------- Handler ---------------------------
 export async function GET(req: NextRequest) {
   try {
     ensureCloudinary();
 
-    const { searchParams } = new URL(req.url);
-    const tab      = (searchParams.get("tab") || "all").toLowerCase();
-    const view     = (searchParams.get("view") || "unassigned").toLowerCase(); // défaut = Mes fichiers
-    const folderId = searchParams.get("folderId") || undefined;
-    const debug    = searchParams.get("debug") === "1";
+    const url = new URL(req.url);
+    const key = normKey(url);
+    const cached = getCache(key);
+    if (cached) return ok(cached);
 
-    /* ---- Vue dossier : par IDs, cache + cooldown ---- */
+    const folder = url.searchParams.get("folder") || undefined;
+    const folderId = url.searchParams.get("folderId") || undefined; // legacy
+    const tab = (url.searchParams.get("tab") || "all").toLowerCase();
+    const page = url.searchParams.get("page") || undefined;
+    const perPage = Math.min(
+      Number(url.searchParams.get("perPage") || 60),
+      MAX_RESULTS
+    );
+    const sort =
+      (url.searchParams.get("sort") || "created_desc").toLowerCase() ===
+      "created_asc"
+        ? "asc"
+        : "desc";
+    const q = (url.searchParams.get("q") || "").trim().toLowerCase();
+
+    // 1) Dossier explicite par *chemin* → le plus économe (prefix)
+    if (folder) {
+      const { items, next } = await listByFolderPrefix({
+        folder,
+        tab,
+        page,
+        perPage,
+        sortDir: sort,
+      });
+
+      const filtered = q
+        ? items.filter((i) => {
+            const pid = (i.public_id || "").toLowerCase();
+            const title = (i.title || "").toLowerCase();
+            return pid.includes(q) || title.includes(q);
+          })
+        : items;
+
+      const payload = { items: filtered, next };
+      setCache(key, payload);
+      return ok(payload);
+    }
+
+    // 2) Compat: par *folderId* (DB → lookup par lots)
     if (folderId) {
-      const cacheKey = `folder:${folderId}:${tab}`;
-      const cached = getCache(folderCache, cacheKey) || [];
+      const { items } = await listByFolderId({
+        folderId,
+        tab,
+        page,
+        perPage,
+      });
+      const filtered = q
+        ? items.filter((i) => {
+            const pid = (i.public_id || "").toLowerCase();
+            const title = (i.title || "").toLowerCase();
+            return pid.includes(q) || title.includes(q);
+          })
+        : items;
 
-      const rows = await prisma.mediaIndex.findMany({ where: { folderId }, select: { publicId: true } });
-      const ids = rows.map((r) => r.publicId);
-      if (ids.length === 0) return ok({ items: [] });
-
-      const { items: found, rateLimited } = await resourcesByIds(ids);
-      let items = found.map(normalize);
-      items = filterByTab(items, tab);
-
-      if (items.length > 0) setCache(folderCache, cacheKey, items);
-
-      if ((items.length === 0 && rateLimited) || Date.now() < cooldownUntil) {
-        const retryAt = cooldownUntil || undefined;
-        if (cached.length > 0) return ok({ items: cached, error: "Cloudinary: limite d’API atteinte — affichage mis en cache (peut être partiel)", retryAt });
-        return ok({ items: [], error: "Cloudinary: limite d’API atteinte — réessayez un peu plus tard", retryAt });
-      }
-
-      return ok(debug ? { mode: "folder", count: items.length, items, cooldownUntil } : { items });
+      const payload = { items: filtered };
+      setCache(key, payload);
+      return ok(payload);
     }
 
-    /* ---- Parcours global/root pour all/assigned/unassigned ---- */
-    const preferGlobal = view === "all";
-    const map = new Map<string, any>();
-
-    async function collectRoot() {
-      for (const expr of [
-        `folder:"${ROOT}"`,
-        `folder:"${ROOT}/*"`,
-        `public_id:"${ROOT}/*"`,
-      ]) {
-        const res = await safeSearch(expr, MAX);
-        for (const r of res) map.set(r.public_id, r);
-        if (map.size >= MAX) break;
-      }
-      if (map.size === 0) {
-        const res = await adminList(`${ROOT}/`);
-        for (const r of res) map.set(r.public_id, r);
-      }
-    }
-    async function collectGlobal() {
-      const res = await adminList(undefined);
-      for (const r of res) map.set(r.public_id, r);
-    }
-
-    if (preferGlobal) { await collectGlobal(); if (map.size === 0) await collectRoot(); }
-    else              { await collectRoot();  if (map.size === 0) await collectGlobal(); }
-
-    let list = Array.from(map.values()).map(normalize);
-
-    if (view === "unassigned" || view === "assigned") {
-      const rows = await prisma.mediaIndex.findMany({ select: { publicId: true } });
-      const assigned = new Set(rows.map((r) => r.publicId));
-      list = view === "unassigned" ? list.filter((i) => !assigned.has(i.public_id))
-                                   : list.filter((i) =>  assigned.has(i.public_id));
-    }
-
-    list = filterByTab(list, tab);
-
-    const payload: any = { items: list };
-    if (Date.now() < cooldownUntil) payload.retryAt = cooldownUntil;
-
-    return ok(debug ? { mode: "browse", preferGlobal, count: list.length, cooldownUntil, items: list } : payload);
+    // 3) Fallback très léger: on liste le ROOT (évite la Search API globale)
+    const { items, next } = await listByFolderPrefix({
+      folder: ROOT,
+      tab,
+      page,
+      perPage,
+      sortDir: sort,
+    });
+    const payload = { items, next };
+    setCache(key, payload);
+    return ok(payload);
   } catch (e: any) {
-    const msg = e?.message || "Erreur interne";
-    console.error("[/api/media/list]", msg);
-    return ok({ items: [], error: msg });
+    const msg = e?.error?.message || e?.message || String(e);
+    // s'il existe un cache pour cette clé, on le sert quand même
+    const url = new URL(req.url);
+    const key = normKey(url);
+    const cached = getCache(key);
+    if (cached) return ok(cached, 60_000);
+    return err(500, msg || "Erreur interne");
   }
 }
