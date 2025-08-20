@@ -1,44 +1,59 @@
-// prisma/schema.prisma
+datasource db {
+  provider          = "postgresql"
+  url               = env("DATABASE_URL")
+  directUrl         = env("POSTGRES_POSTGRES_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+}
 
 generator client {
   provider = "prisma-client-js"
 }
 
-datasource db {
-  provider  = "postgresql"
-  // Pool (Prisma Accelerate) — DOIT pointer sur PRISMA_DATABASE_URL
-  url       = env("PRISMA_DATABASE_URL")
-  // Connexion directe (migrations) — on réutilise DATABASE_URL (pas besoin de DIRECT_URL séparé)
-  directUrl = env("DATABASE_URL")
-}
-
-/** ====== Modèles ====== **/
-
-model Folder {
-  id        String    @id @default(cuid())
+model AppFolder {
+  id        String   @id @default(cuid())
   name      String
   parentId  String?
-  parent    Folder?   @relation("FolderChildren", fields: [parentId], references: [id])
-  children  Folder[]  @relation("FolderChildren")
-
   createdBy String?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  media     MediaIndex[]
+  // relations
+  parent             AppFolder?        @relation("AppFolderChildren", fields: [parentId], references: [id])
+  children           AppFolder[]       @relation("AppFolderChildren")
+  media              MediaIndex[]      @relation("FolderMedia")
+  albumLinksAsAlbum  AlbumFolderLink[] @relation("Album_AsAlbum")
+  albumLinksAsFolder AlbumFolderLink[] @relation("Album_AsFolder")
 
-  @@unique([parentId, name])  // nom unique dans un même dossier
+  @@unique([parentId, name])
   @@index([parentId])
+  @@map("Folder") // <- le nom réel de la table
 }
 
 model MediaIndex {
-  id        String   @id @default(cuid())
-  publicId  String   @unique
-  folderId  String?
-  folder    Folder?  @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  id       String @id @default(cuid())
+  publicId String @unique
+
+  // 👉 tu gardes le nom "appFolderId" dans le code,
+  //    mais tu le MAP sur la colonne SQL "folderId"
+  appFolderId String? @map("folderId")
 
   createdBy String?
   createdAt DateTime @default(now())
 
-  @@index([folderId])
+  // relation vers Folder en passant par appFolderId
+  folder AppFolder? @relation("FolderMedia", fields: [appFolderId], references: [id])
+  // @@map("MediaIndex") // inutile ici (le nom du modèle == nom de la table)
+
+  @@index([appFolderId])
+}
+
+model AlbumFolderLink {
+  albumId   String
+  folderId  String
+  createdAt DateTime @default(now()) @db.Timestamp(6)
+
+  album  AppFolder @relation("Album_AsAlbum", fields: [albumId], references: [id], map: "AlbumFolderLink_album_fkey")
+  folder AppFolder @relation("Album_AsFolder", fields: [folderId], references: [id], map: "AlbumFolderLink_folder_fkey")
+
+  @@id([albumId, folderId])
 }

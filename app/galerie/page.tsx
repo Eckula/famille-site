@@ -5,7 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import GalleryFolders from "../components/GalleryFolders";
 
 /* ---------- Types ---------- */
@@ -31,9 +31,7 @@ const isYouTube = (url: string) => /youtu\.be|youtube\.com/.test(url);
 
 function getTabFromUrl(): Tab {
   if (typeof window === "undefined") return "all";
-  const t = (
-    new URLSearchParams(window.location.search).get("tab") || "all"
-  ).toLowerCase();
+  const t = (new URLSearchParams(window.location.search).get("tab") || "all").toLowerCase();
   const allowed: Tab[] = ["all", "images", "videos", "audio", "documents"];
   return (allowed as readonly string[]).includes(t) ? (t as Tab) : "all";
 }
@@ -53,45 +51,30 @@ function docEmoji(ext?: string) {
   if (["zip", "rar", "7z", "tar", "gz"].includes(e)) return "🗜️";
   return "📎";
 }
+const sanitizeName = (name: string) => name.replace(/[^\w.\-\sÀ-ÖØ-öø-ÿ]/g, "_");
 
-function sanitizeName(name: string) {
-  return name.replace(/[^\w.\-\sÀ-ÖØ-öø-ÿ]/g, "_");
-}
-
-function apiFile(
-  publicId: string,
-  params: Record<string, string | number | boolean | undefined> = {}
-) {
+function apiFile(publicId: string, params: Record<string, string | number | boolean | undefined> = {}) {
   const origin = typeof window === "undefined" ? "" : window.location.origin;
   const u = new URL("/api/media/file", origin);
   u.searchParams.set("public_id", publicId);
   Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && v !== "")
-      u.searchParams.set(k, String(v));
+    if (v !== undefined && v !== null && v !== "") u.searchParams.set(k, String(v));
   });
   return u.toString();
 }
 
 function openUrl(it: Item, overrideExt?: string) {
   const ext = (overrideExt || it.format || "").toLowerCase();
-  const baseName =
-    it.title?.trim() || it.public_id.split("/").pop() || "document";
-  const nice = sanitizeName(
-    ext && !baseName.endsWith("." + ext) ? `${baseName}.${ext}` : baseName
-  );
+  const baseName = it.title?.trim() || it.public_id.split("/").pop() || "document";
+  const nice = sanitizeName(ext && !baseName.endsWith("." + ext) ? `${baseName}.${ext}` : baseName);
   return apiFile(it.public_id, { format: ext || "", dl: 0, filename: nice });
 }
-
 function downloadUrl(it: Item, overrideExt?: string) {
   const ext = (overrideExt || it.format || "").toLowerCase();
-  const baseName =
-    it.title?.trim() || it.public_id.split("/").pop() || "document";
-  const nice = sanitizeName(
-    ext && !baseName.endsWith("." + ext) ? `${baseName}.${ext}` : baseName
-  );
+  const baseName = it.title?.trim() || it.public_id.split("/").pop() || "document";
+  const nice = sanitizeName(ext && !baseName.endsWith("." + ext) ? `${baseName}.${ext}` : baseName);
   return apiFile(it.public_id, { format: ext || "", dl: 1, filename: nice });
 }
-
 function folderOf(it: Item) {
   return (it.folder && it.folder.length > 0
     ? it.folder.replace(/\/+$/, "")
@@ -102,12 +85,9 @@ function folderOf(it: Item) {
 
 export default function GaleriePage() {
   const searchParams = useSearchParams();
+  const router = useRouter();
 
-  // petit helper null-safe
-  const spGet = useCallback(
-    (k: string, fallback = "") => searchParams?.get(k) ?? fallback,
-    [searchParams]
-  );
+  const spGet = useCallback((k: string, fallback = "") => searchParams?.get(k) ?? fallback, [searchParams]);
 
   const [raw, setRaw] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
@@ -120,11 +100,7 @@ export default function GaleriePage() {
   // Sélection multiple
   const [selectedPublicIds, setSelectedPublicIds] = useState<Set<string>>(new Set());
   const toggleSel = (publicId: string) =>
-    setSelectedPublicIds((s) =>
-      s.has(publicId)
-        ? new Set([...s].filter((x) => x !== publicId))
-        : new Set(s).add(publicId)
-    );
+    setSelectedPublicIds((s) => (s.has(publicId) ? new Set([...s].filter((x) => x !== publicId)) : new Set(s).add(publicId)));
   const clearSel = () => setSelectedPublicIds(new Set());
 
   // Déplacement Cloudinary (physique)
@@ -135,10 +111,18 @@ export default function GaleriePage() {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [assignFolderId, setAssignFolderId] = useState<string>("");
 
+  // Mapping publicId -> (folderId, name) pour badges
+  const [assignedMap, setAssignedMap] = useState<Record<string, { folderId: string; name: string }>>({});
+
   // Lightbox
   const [lbOpen, setLbOpen] = useState(false);
   const [lbIndex, setLbIndex] = useState(0);
   const swipeStartX = useRef<number | null>(null);
+
+  // busy states
+  const [busyDel, setBusyDel] = useState(false);
+  const [busyMove, setBusyMove] = useState(false);
+  const [busyAssign, setBusyAssign] = useState(false);
 
   /* ---------- Chargements ---------- */
 
@@ -146,7 +130,6 @@ export default function GaleriePage() {
     setLoading(true);
     setErrorMsg("");
     try {
-      // ✅ Option B : par défaut on reste sur "Mes fichiers" (non classés)
       const v = (spGet("view", "unassigned")).toLowerCase();
       const folderId = spGet("folderId", "");
       const currentTab = getTabFromUrl();
@@ -164,13 +147,7 @@ export default function GaleriePage() {
       }
       const j = await r.json();
 
-      const src: any[] = Array.isArray(j?.items)
-        ? j.items
-        : Array.isArray(j?.resources)
-        ? j.resources
-        : Array.isArray(j)
-        ? j
-        : [];
+      const src: any[] = Array.isArray(j?.items) ? j.items : Array.isArray(j?.resources) ? j.resources : Array.isArray(j) ? j : [];
 
       const list: Item[] = src.map((x: any) => {
         const public_id: string = x.public_id || x?.asset_id || "";
@@ -223,11 +200,23 @@ export default function GaleriePage() {
     }
   }, []);
 
+  const fetchAssignedMap = useCallback(async () => {
+    try {
+      const r = await fetch("/api/folders/map", { cache: "no-store" });
+      const j = await r.json();
+      if (r.ok && j?.byPublicId) setAssignedMap(j.byPublicId);
+      else setAssignedMap({});
+    } catch {
+      setAssignedMap({});
+    }
+  }, []);
+
   useEffect(() => {
     setTab(getTabFromUrl());
     fetchList();
     fetchFolders();
-  }, [fetchList, fetchFolders, searchParams]);
+    fetchAssignedMap();
+  }, [fetchList, fetchFolders, fetchAssignedMap, searchParams]);
 
   /* ---------- Filtres / Tri ---------- */
 
@@ -239,11 +228,7 @@ export default function GaleriePage() {
     if (tab === "documents") data = data.filter((x) => x.kind === "document");
     const q = query.trim().toLowerCase();
     if (q) data = data.filter((x) => (x.title || "").toLowerCase().includes(q));
-    data.sort((a, b) =>
-      sort === "newest"
-        ? +new Date(b.createdAt) - +new Date(a.createdAt)
-        : +new Date(a.createdAt) - +new Date(b.createdAt)
-    );
+    data.sort((a, b) => (sort === "newest" ? +new Date(b.createdAt) - +new Date(a.createdAt) : +new Date(a.createdAt) - +new Date(b.createdAt)));
     return data;
   }, [raw, tab, query, sort]);
 
@@ -254,112 +239,99 @@ export default function GaleriePage() {
   async function doDelete() {
     if (selectedPublicIds.size === 0) return;
     if (!confirm(`Supprimer ${selectedPublicIds.size} élément(s) ?`)) return;
-    const payload = {
-      ids: Array.from(selectedPublicIds),
-      public_ids: Array.from(selectedPublicIds),
-    };
-    const res = await fetch("/api/media/delete", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const j = await res.json();
-    if (!res.ok) alert(j?.error || "Erreur suppression.");
-    clearSel();
-    fetchList();
+
+    setBusyDel(true);
+    try {
+      const payload = { publicIds: Array.from(selectedPublicIds) };
+      const res = await fetch("/api/media/delete", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.error || `HTTP ${res.status}`);
+
+      clearSel();
+      await fetchList();
+      await fetchAssignedMap();
+    } catch (e: any) {
+      alert(e?.message || "Erreur suppression.");
+    } finally {
+      setBusyDel(false);
+    }
   }
 
-  // Déplacement Cloudinary (physique)
   async function doMoveCloudinary() {
     if (selectedPublicIds.size === 0) return;
     const target = moveFolder.trim().replace(/\/+$/, "");
-    if (!target) {
-      alert("Renseigne un dossier Cloudinary cible (ex: famille/Photos/2025)");
-      return;
-    }
+    if (!target) { alert("Renseigne un dossier Cloudinary cible (ex: famille/Photos/2025)"); return; }
 
-    const selectedItems = items.filter((i) => selectedPublicIds.has(i.public_id));
-    const already = selectedItems.filter((i) => folderOf(i) === target);
-    const toMovePublicIds = selectedItems
-      .filter((i) => folderOf(i) !== target)
-      .map((i) => i.public_id);
+    setBusyMove(true);
+    try {
+      const payload = { publicIds: Array.from(selectedPublicIds), toFolder: target };
+      const res = await fetch("/api/media/move", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.error || `HTTP ${res.status}`);
 
-    if (already.length && !toMovePublicIds.length) {
-      alert("Les éléments sélectionnés sont déjà dans ce dossier Cloudinary.");
-      return;
+      clearSel();
+      await fetchList();
+      // (le mapping n'est pas impacté par un simple move physique)
+    } catch (e: any) {
+      alert(e?.message || "Erreur déplacement Cloudinary.");
+    } finally {
+      setBusyMove(false);
     }
-    if (!toMovePublicIds.length) return;
-
-    const payload = {
-      ids: toMovePublicIds,
-      public_ids: toMovePublicIds,
-      toFolder: target,
-    };
-    const res = await fetch("/api/media/move", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const j = await res.json();
-    if (!res.ok) {
-      alert(j?.error || "Erreur déplacement Cloudinary.");
-      return;
-    }
-
-    if (already.length) {
-      alert(`Déplacement effectué. ${already.length} élément(s) étaient déjà dans « ${target} » et ont été ignorés.`);
-    }
-    clearSel();
-    fetchList();
   }
 
-  // Affectation à un dossier (BD)
   async function doAssignFolder() {
     if (selectedPublicIds.size === 0) return;
-    if (!assignFolderId) {
-      alert("Sélectionne un dossier dans la liste.");
-      return;
+    if (!assignFolderId) { alert("Sélectionne un dossier."); return; }
+
+    setBusyAssign(true);
+    try {
+      const payload = { folderId: assignFolderId, public_ids: Array.from(selectedPublicIds) };
+      const res = await fetch("/api/folders/assign", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || j?.error) throw new Error(j?.error || `HTTP ${res.status}`);
+
+      clearSel();
+      await fetchFolders();
+      await fetchAssignedMap();
+      await fetchList();
+
+      if (confirm(`Affectés (${j.count}). Ouvrir le dossier ?`)) {
+        router.push(`/evenements/view?folderId=${assignFolderId}`);
+      }
+    } catch (e: any) {
+      alert(e?.message || "Erreur d'affectation.");
+    } finally {
+      setBusyAssign(false);
     }
-    const payload = {
-      folderId: assignFolderId,
-      public_ids: Array.from(selectedPublicIds),
-    };
-    const res = await fetch("/api/folders/assign", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const j = await res.json();
-    if (!res.ok) {
-      alert(j?.error || "Erreur d'affectation au dossier.");
-      return;
-    }
-    clearSel();
-    fetchFolders();
-    fetchList();
-    alert(`Affectés à ${folders.find(f => f.id === assignFolderId)?.name || "le dossier"} (${j.count})`);
   }
 
   async function doUnassignFolder() {
     if (selectedPublicIds.size === 0) return;
-    const payload = {
-      folderId: null,
-      public_ids: Array.from(selectedPublicIds),
-    };
-    const res = await fetch("/api/folders/assign", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const j = await res.json();
-    if (!res.ok) {
-      alert(j?.error || "Erreur de retrait du dossier.");
-      return;
+    setBusyAssign(true);
+    try {
+      const payload = { folderId: null, public_ids: Array.from(selectedPublicIds) };
+      const res = await fetch("/api/folders/assign", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || j?.error) throw new Error(j?.error || `HTTP ${res.status}`);
+
+      clearSel();
+      await fetchFolders();
+      await fetchAssignedMap();
+      await fetchList();
+      alert(`Retirés (${j.count})`);
+    } catch (e: any) {
+      alert(e?.message || "Erreur de retrait.");
+    } finally {
+      setBusyAssign(false);
     }
-    clearSel();
-    fetchFolders();
-    fetchList();
-    alert(`Retirés du dossier (${j.count})`);
   }
 
   /* ---------- Téléchargements ---------- */
@@ -369,25 +341,13 @@ export default function GaleriePage() {
       const u = dl ? downloadUrl(it) : openUrl(it);
       setTimeout(() => {
         const a = document.createElement("a");
-        a.href = u;
-        a.target = "_blank";
-        a.rel = "noopener";
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
+        a.href = u; a.target = "_blank"; a.rel = "noopener";
+        document.body.appendChild(a); a.click(); a.remove();
       }, idx * 150);
     });
   }
-
-  function downloadSelected() {
-    if (selectedPublicIds.size === 0) return;
-    const list = items.filter((i) => selectedPublicIds.has(i.public_id));
-    openMany(list, true);
-  }
-  function downloadVisible() {
-    if (items.length === 0) return;
-    openMany(items, true);
-  }
+  const downloadSelected = () => selectedPublicIds.size && openMany(items.filter(i => selectedPublicIds.has(i.public_id)), true);
+  const downloadVisible  = () => items.length && openMany(items, true);
 
   /* ---------- Sélection globale ---------- */
 
@@ -410,7 +370,6 @@ export default function GaleriePage() {
     const idx = viewable.findIndex((x) => x.id === id);
     if (idx >= 0) { setLbIndex(idx); setLbOpen(true); }
   };
-
   useEffect(() => {
     if (!lbOpen) return;
     const onKey = (e: KeyboardEvent) => {
@@ -421,7 +380,6 @@ export default function GaleriePage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [lbOpen, viewable.length]);
-
   const onTouchStart = (e: React.TouchEvent) => { swipeStartX.current = e.touches[0].clientX; };
   const onTouchEnd = (e: React.TouchEvent) => {
     if (swipeStartX.current == null) return;
@@ -451,9 +409,7 @@ export default function GaleriePage() {
             <Link
               key={k}
               prefetch={false}
-              href={`/galerie?tab=${k}&view=${spGet("view","unassigned")}${
-                spGet("folderId","") ? `&folderId=${spGet("folderId","")}` : ""
-              }`}
+              href={`/galerie?tab=${k}&view=${spGet("view","unassigned")}${spGet("folderId","") ? `&folderId=${spGet("folderId","")}` : ""}`}
               onClick={() => setTab(k)}
               className={`rounded-full px-4 py-2 ${tab === k ? "bg-white/20" : "hover:bg-white/10"}`}
             >
@@ -478,11 +434,7 @@ export default function GaleriePage() {
             <option value="newest">Plus récents</option>
             <option value="oldest">Plus anciens</option>
           </select>
-          <button
-            onClick={fetchList}
-            disabled={loading}
-            className="rounded-lg border border-white/20 bg-black/30 px-3 py-2"
-          >
+          <button onClick={fetchList} disabled={loading} className="rounded-lg border border-white/20 bg-black/30 px-3 py-2">
             {loading ? "Chargement…" : "Rafraîchir"}
           </button>
           <button
@@ -522,8 +474,13 @@ export default function GaleriePage() {
                 Télécharger sélection
               </button>
 
-              <button onClick={doDelete} className="rounded bg-red-500 px-3 py-2 text-black hover:bg-red-400">
-                Supprimer
+              <button
+                type="button"
+                onClick={doDelete}
+                disabled={busyDel || selectedPublicIds.size === 0}
+                className="rounded bg-red-500 px-3 py-2 text-black hover:bg-red-400 disabled:opacity-60"
+              >
+                {busyDel ? "Suppression…" : "Supprimer"}
               </button>
 
               {/* Déplacement Cloudinary (physique) */}
@@ -535,10 +492,11 @@ export default function GaleriePage() {
               />
               <button
                 onClick={doMoveCloudinary}
-                className="rounded bg-yellow-500 px-3 py-2 text-black hover:bg-yellow-400"
+                disabled={busyMove || selectedPublicIds.size === 0}
+                className="rounded bg-yellow-500 px-3 py-2 text-black hover:bg-yellow-400 disabled:opacity-60"
                 title="Déplacer physiquement dans Cloudinary"
               >
-                Déplacer (Cloudinary)
+                {busyMove ? "Déplacement…" : "Déplacer (Cloudinary)"}
               </button>
 
               {/* Affectation dossier BD */}
@@ -555,17 +513,18 @@ export default function GaleriePage() {
               </select>
               <button
                 onClick={doAssignFolder}
+                disabled={busyAssign || !assignFolderId || selectedPublicIds.size === 0}
                 className="rounded bg-emerald-400 px-3 py-2 text-black hover:bg-emerald-300 disabled:opacity-50"
-                disabled={!assignFolderId}
               >
-                Affecter au dossier
+                {busyAssign ? "Affectation…" : "Affecter au dossier (BD)"}
               </button>
               <button
                 onClick={doUnassignFolder}
-                className="rounded border border-white/30 px-3 py-2 hover:bg-white/10"
+                disabled={busyAssign || selectedPublicIds.size === 0}
+                className="rounded border border-white/30 px-3 py-2 hover:bg-white/10 disabled:opacity-60"
                 title="Retirer la sélection de tout dossier"
               >
-                Retirer du dossier
+                {busyAssign ? "Retrait…" : "Retirer du dossier"}
               </button>
 
               <button onClick={clearSel} className="rounded border border-white/30 px-3 py-2 hover:bg-white/10">
@@ -586,9 +545,7 @@ export default function GaleriePage() {
           {(spGet("view","unassigned").toLowerCase() === "unassigned") && (
             <Link
               prefetch={false}
-              href={`/galerie?tab=${getTabFromUrl()}&view=all${
-                spGet("folderId","") ? `&folderId=${spGet("folderId","")}` : ""
-              }`}
+              href={`/galerie?tab=${getTabFromUrl()}&view=all${spGet("folderId","") ? `&folderId=${spGet("folderId","")}` : ""}`}
               className="inline-block rounded border border-white/30 bg-white/10 px-3 py-1 hover:bg-white/20"
             >
               Voir tous les médias (dossier Cloudinary)
@@ -603,10 +560,24 @@ export default function GaleriePage() {
             const isAudio = m.kind === "audio";
             const isDoc = m.kind === "document";
             const ext = (m.format || "").toLowerCase();
+            const assigned = assignedMap[m.public_id];
 
             return (
               <div key={m.id} className="group relative overflow-hidden rounded-lg border border-white/20">
-                <label className="absolute left-2 top-2 z-10 inline-flex items-center gap-2 rounded bg-black/50 px-2 py-1 text-xs">
+                {/* Badge d'affectation */}
+                {assigned && (
+                  <Link
+                    prefetch={false}
+                    href={`/evenements/view?folderId=${assigned.folderId}`}
+                    className="absolute left-2 top-2 z-10 rounded bg-emerald-500/90 px-2 py-1 text-xs font-medium text-black hover:bg-emerald-400"
+                    title={`Voir le dossier : ${assigned.name}`}
+                  >
+                    📁 {assigned.name}
+                  </Link>
+                )}
+
+                {/* Checkbox */}
+                <label className="absolute right-2 top-2 z-10 inline-flex items-center gap-2 rounded bg-black/50 px-2 py-1 text-xs">
                   <input type="checkbox" checked={selectedPublicIds.has(m.public_id)} onChange={() => toggleSel(m.public_id)} />
                   Sélection
                 </label>
@@ -662,7 +633,7 @@ export default function GaleriePage() {
                 </div>
 
                 {(isDoc || isAudio) && (
-                  <div className="absolute right-2 top-2 z-10">
+                  <div className="absolute left-2 bottom-2 z-10">
                     <a
                       href={downloadUrl(m)}
                       className="rounded bg-white/80 px-2 py-1 text-xs text-black hover:bg-white"
@@ -703,22 +674,12 @@ export default function GaleriePage() {
                 const cur = viewable[lbIndex];
                 const ext = (cur.format || "").toLowerCase();
 
-                if (cur.kind === "image") {
-                  return <Image src={cur.url} alt={cur.title} width={1200} height={800} className="w-full max-h-[80vh] object-contain" unoptimized />;
-                }
-                if (isYouTube(cur.url)) {
-                  return <iframe src={cur.url.replace("watch?v=", "embed/")} className="h-[80vh] w-full" allow="autoplay; encrypted-media" allowFullScreen />;
-                }
-                if (cur.kind === "video") {
-                  return <video src={cur.url} className="w-full max-h-[80vh] object-contain" controls autoPlay playsInline />;
-                }
+                if (cur.kind === "image") return <Image src={cur.url} alt={cur.title} width={1200} height={800} className="w-full max-h-[80vh] object-contain" unoptimized />;
+                if (isYouTube(cur.url))   return <iframe src={cur.url.replace("watch?v=", "embed/")} className="h-[80vh] w-full" allow="autoplay; encrypted-media" allowFullScreen />;
+                if (cur.kind === "video") return <video src={cur.url} className="w-full max-h-[80vh] object-contain" controls autoPlay playsInline />;
                 if (cur.kind === "audio") {
                   const src = openUrl(cur, ext || "mp3");
-                  return (
-                    <div className="grid h-[30vh] w-full place-items-center bg-black">
-                      <audio src={src} controls autoPlay className="w-[90%]" />
-                    </div>
-                  );
+                  return <div className="grid h-[30vh] w-full place-items-center bg-black"><audio src={src} controls autoPlay className="w-[90%]" /></div>;
                 }
                 if (ext === "pdf") {
                   const pdfUrl = apiFile(cur.public_id, { format: "pdf", dl: 0, filename: sanitizeName((cur.title || "document") + ".pdf") });

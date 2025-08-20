@@ -1,10 +1,10 @@
 // app/api/media/move/route.ts
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 import { NextResponse } from "next/server";
 import { v2 as cloudinary } from "cloudinary";
 import { requireAdmin } from "../../_admin";
-
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 
 const ok = (data: any, status = 200) =>
   NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });
@@ -13,14 +13,10 @@ function ensureCloudinary() {
   const cn = process.env.CLOUDINARY_CLOUD_NAME || process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
   const ak = process.env.CLOUDINARY_API_KEY;
   const as = process.env.CLOUDINARY_API_SECRET;
-  if (!cn || !ak || !as) throw new Error("Cloudinary: variables manquantes (cloud_name/api_key/api_secret).");
+  if (!cn || !ak || !as) throw new Error("Cloudinary: variables manquantes.");
   cloudinary.config({ cloud_name: cn, api_key: ak, api_secret: as, secure: true });
 }
-
-function baseName(pid: string) {
-  const parts = pid.split("/");
-  return parts[parts.length - 1];
-}
+const baseName = (pid: string) => (pid.lastIndexOf("/") >= 0 ? pid.slice(pid.lastIndexOf("/") + 1) : pid);
 
 export async function POST(req: Request) {
   const deny = await requireAdmin(req);
@@ -28,9 +24,12 @@ export async function POST(req: Request) {
 
   try {
     ensureCloudinary();
-    const { public_ids, ids, toFolder } = await req.json();
-    const list: string[] = Array.isArray(public_ids) ? public_ids : (Array.isArray(ids) ? ids : []);
+
+    const body = await req.json().catch(() => ({}));
+    const { public_ids, publicIds, ids, toFolder } = body;
+    const list: string[] = (public_ids || publicIds || ids || []).filter(Boolean);
     const target = String(toFolder || "").trim().replace(/\/+$/, "");
+
     if (!list.length) return ok({ error: "Aucun public_id fourni." }, 400);
     if (!target) return ok({ error: "toFolder requis." }, 400);
 
@@ -40,23 +39,23 @@ export async function POST(req: Request) {
 
     for (const pid of list) {
       const toId = `${target}/${baseName(pid)}`;
-      let done = false;
+      if (pid === toId) { skipped.push(pid); continue; }
 
+      let done = false;
       for (const rt of ["image", "video", "raw"] as const) {
         try {
-          // @ts-ignore
-          const res = await cloudinary.uploader.rename(pid, toId, { resource_type: rt, overwrite: false });
+          const res: any = await cloudinary.uploader.rename(pid, toId, {
+            resource_type: rt, type: "upload", overwrite: false,
+          } as any);
           if (res?.public_id) { moved.push(pid); done = true; break; }
         } catch (e: any) {
           const msg = e?.error?.message || e?.message || "";
-          if (!/not found/i.test(msg)) {
+          if (!/not found|resource_type/i.test(msg)) {
             errors.push({ id: pid, error: msg || "rename error" });
-            done = true;
-            break;
+            done = true; break;
           }
         }
       }
-
       if (!done) skipped.push(pid);
     }
 

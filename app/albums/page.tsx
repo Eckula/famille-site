@@ -1,148 +1,246 @@
 // app/albums/page.tsx
-
 "use client";
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { ALBUMS_ROOT, lastSegment, joinPath } from "@/lib/config";
+import { useEffect, useMemo, useState, useCallback } from "react";
 
-type FolderNode = { path: string; name: string; createdAt?: string };
+type Folder = { id: string; name: string; parentId: string | null; createdAt?: string | null };
+type CoverMap = Record<string, string | null>;
+type FoldersRes = { items?: Folder[]; folders?: Folder[] } | Folder[];
 
 async function getJSON<T>(url: string): Promise<T> {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
+  const r = await fetch(url, { cache: "no-store" });
+  const txt = await r.text();
+  if (!r.ok) throw new Error(txt || `HTTP ${r.status}`);
+  return txt ? JSON.parse(txt) : ({} as any);
 }
 async function postJSON<T>(url: string, body: any): Promise<T> {
   const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || (j as any)?.error) throw new Error((j as any)?.error || `HTTP ${r.status}`);
+  return j;
 }
 async function patchJSON<T>(url: string, body: any): Promise<T> {
   const r = await fetch(url, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || (j as any)?.error) throw new Error((j as any)?.error || `HTTP ${r.status}`);
+  return j;
 }
 async function delJSON<T>(url: string, body: any): Promise<T> {
   const r = await fetch(url, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || (j as any)?.error) throw new Error((j as any)?.error || `HTTP ${r.status}`);
+  return j;
 }
 
-export default function AlbumsListPage() {
-  const [folders, setFolders] = useState<FolderNode[]>([]);
-  const [covers, setCovers] = useState<Record<string, string | null>>({});
+export default function AlbumsPage() {
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [covers, setCovers] = useState<CoverMap>({});
+  const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [name, setName] = useState("");
 
-  // create
-  const [newName, setNewName] = useState("");
-  const [creating, setCreating] = useState(false);
+  // --- charge les sous-dossiers du parent "Albums"
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setErr("");
+    try {
+      let u = new URL("/api/folders", window.location.origin);
+      u.searchParams.set("parentName", "Albums");
+      u.searchParams.set("ts", String(Date.now()));
+      let j = (await getJSON<FoldersRes>(u.toString())) as any;
 
-  // edit/delete
-  const [editingPath, setEditingPath] = useState<string | null>(null);
-  const [editingName, setEditingName] = useState("");
+      let list: Folder[] =
+        Array.isArray(j?.items) ? j.items :
+        Array.isArray(j?.folders) ? j.folders :
+        Array.isArray(j) ? j : [];
 
-  async function refresh() {
-    const resp = await getJSON<{ items: FolderNode[] }>(`/api/media/folders?root=${encodeURIComponent(ALBUMS_ROOT)}`);
-    const items = Array.isArray(resp?.items) ? resp.items : [];
-    setFolders(items.filter(f => f.path?.toLowerCase().startsWith(ALBUMS_ROOT.toLowerCase() + "/")));
-    const cov = await getJSON<{ covers: Record<string, string|null> }>(`/api/media/covers?root=${encodeURIComponent(ALBUMS_ROOT)}`);
-    setCovers(cov.covers || {});
-  }
+      // fallback si besoin : on récupère l'id du parent "Albums" puis ses enfants
+      if (!list.length) {
+        const roots = (await getJSON<FoldersRes>("/api/folders")) as any;
+        const arr =
+          Array.isArray(roots?.items) ? roots.items :
+          Array.isArray(roots?.folders) ? roots.folders :
+          Array.isArray(roots) ? roots : [];
+        const albumsRoot = arr.find((f: Folder) => f.name === "Albums");
+        if (albumsRoot?.id) {
+          u = new URL("/api/folders", window.location.origin);
+          u.searchParams.set("parent", albumsRoot.id);
+          j = (await getJSON<FoldersRes>(u.toString())) as any;
+          list =
+            Array.isArray(j?.items) ? j.items :
+            Array.isArray(j?.folders) ? j.folders :
+            Array.isArray(j) ? j : [];
+        }
+      }
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true); setErr("");
-      try { await refresh(); } catch (e: any) { setErr(e?.message || "Erreur chargement albums"); }
-      finally { setLoading(false); }
-    })();
+      setFolders(list);
+    } catch (e: any) {
+      setErr(e?.message || "Erreur chargement des albums");
+      setFolders([]);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const albums = useMemo(() => [...folders], [folders]);
+  useEffect(() => { refresh(); }, [refresh]);
 
-  async function onCreate(e: React.FormEvent) {
-    e.preventDefault();
-    if (!newName.trim()) return;
-    setCreating(true); setErr("");
+  const albums = useMemo(() => {
+    const list = [...folders];
+    return list.sort((a, b) => {
+      const ad = a.createdAt ? +new Date(a.createdAt) : 0;
+      const bd = b.createdAt ? +new Date(b.createdAt) : 0;
+      return bd - ad || a.name.localeCompare(b.name, "fr");
+    });
+  }, [folders]);
+
+  // --- récupérer la cover (première photo de l'album)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(
+        albums.map(async (f) => {
+          try {
+            const u = new URL(`/api/albums/${encodeURIComponent(f.id)}/photos`, window.location.origin);
+            u.searchParams.set("limit", "1");
+            const j: any = await getJSON(u.toString());
+            const first = Array.isArray(j?.items) ? j.items[0] : null;
+            return [f.id, first?.thumb || first?.url || null] as const;
+          } catch {
+            return [f.id, null] as const;
+          }
+        })
+      );
+      if (!cancelled) setCovers(Object.fromEntries(entries));
+    })();
+    return () => { cancelled = true; };
+  }, [albums]);
+
+  // --- créer (BD uniquement, sous "Albums")
+  async function onCreate() {
+    const val = name.trim();
+    if (!val) return;
     try {
-      await postJSON("/api/media/folders", { path: joinPath(ALBUMS_ROOT, newName.trim()) });
-      setNewName("");
+      // 1er essai : POST /api/folders { name, parentName: "Albums" }
+      try {
+        await postJSON("/api/folders", { name: val, parentName: "Albums" });
+      } catch {
+        // Repli : /api/folders/create (hérité)
+        await postJSON("/api/folders/create", { name: val, parentName: "Albums" });
+      }
+      setName("");
       await refresh();
-    } catch (e: any) { setErr(e?.message || "Création impossible"); }
-    finally { setCreating(false); }
+    } catch (e: any) {
+      alert(e?.message || "Création impossible");
+    }
   }
 
-  async function onDelete(path: string) {
-    if (!confirm("Supprimer l’album et tous ses médias ?")) return;
-    try { await delJSON("/api/media/folders", { path, recursive: true }); await refresh(); }
-    catch (e: any) { alert(e?.message || "Suppression impossible"); }
+  // --- renommer (BD uniquement)
+  async function onRename(f: Folder) {
+    const newName = prompt("Nouveau nom de l’album :", f.name)?.trim();
+    if (!newName || newName === f.name) return;
+    try {
+      try {
+        await patchJSON("/api/folders", { id: f.id, name: newName });
+      } catch {
+        await postJSON("/api/folders/rename", { id: f.id, name: newName });
+      }
+      await refresh();
+    } catch (e: any) {
+      alert(e?.message || "Renommage impossible");
+    }
   }
 
-  function startRename(path: string, current: string) { setEditingPath(path); setEditingName(current); }
-  function cancelRename() { setEditingPath(null); setEditingName(""); }
-  async function confirmRename() {
-    const from = editingPath!, name = editingName.trim();
-    if (!from || !name) return;
-    const to = joinPath(ALBUMS_ROOT, name);
-    try { await patchJSON("/api/media/folders", { from, to }); cancelRename(); await refresh(); }
-    catch (e: any) { alert(e?.message || "Renommage impossible"); }
+  // --- supprimer (BD uniquement — les média/dossiers galerie restent)
+  async function onDelete(f: Folder) {
+    if (!confirm(`Supprimer l’album « ${f.name} » ? (les dossiers & médias restent en galerie)`)) return;
+    try {
+      try {
+        await delJSON("/api/folders", { id: f.id });
+      } catch {
+        await postJSON("/api/folders/delete", { id: f.id });
+      }
+      await refresh();
+    } catch (e: any) {
+      alert(e?.message || "Suppression impossible");
+    }
   }
 
   return (
     <main className="px-6 py-24 text-white">
       <h1 className="mb-2 text-3xl font-bold">Albums</h1>
-      <p className="text-white/80 mb-6">Sous-dossiers de <code>{ALBUMS_ROOT}</code>.</p>
+      <p className="text-white/80 mb-4">Regroupements de dossiers de la galerie (BD uniquement).</p>
 
-      {/* création */}
-      <form onSubmit={onCreate} className="mb-10 flex gap-3 max-w-xl">
-        <input value={newName} onChange={(e)=>setNewName(e.target.value)} placeholder="Nom de l’album"
-               className="flex-1 px-3 py-2 rounded border bg-white/5 text-white" />
-        <button disabled={creating} className="px-4 py-2 rounded bg-black text-white disabled:opacity-60">
-          {creating ? "Création…" : "Créer"}
+      {/* Formulaire créer */}
+      <div className="mb-6 flex gap-2 max-w-lg">
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Nom de l’album"
+          className="flex-1 rounded border border-white/25 bg-black/30 px-3 py-2"
+        />
+        <button onClick={onCreate} className="rounded bg-emerald-400 px-3 py-2 text-black hover:bg-emerald-300">
+          Créer
         </button>
-      </form>
+      </div>
 
-      {err && <p className="text-red-300 mb-3">⚠️ {err}</p>}
-
-      {loading ? <p className="text-white/70">Chargement…</p> : albums.length === 0 ? (
+      {err && <p className="mb-3 text-red-300">⚠️ {err}</p>}
+      {loading ? (
+        <p className="text-white/70">Chargement…</p>
+      ) : !albums.length ? (
         <p className="text-white/80">Aucun album.</p>
       ) : (
-        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-          {albums.map(f => {
-            const slug = lastSegment(f.path);
-            const cover = covers[f.path] ?? null;
-            const isEditing = editingPath === f.path;
+        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          {albums.map((a) => {
+            const cover = covers[a.id];
+            const href = `/album/${encodeURIComponent(a.id)}`;
             return (
-              <div key={f.path} className="group relative overflow-hidden rounded-2xl border border-white/25 bg-white/5 shadow-sm">
-                <Link prefetch={false} href={`/albums/${encodeURIComponent(slug)}`} className="block">
-                  <div className="aspect-video w-full overflow-hidden bg-black/30">
-                    {cover ? (
-                      <Image src={cover} alt={f.name} width={800} height={450} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" unoptimized />
-                    ) : (
-                      <div className="grid h-full w-full place-items-center text-white/80">📚 {f.name}</div>
-                    )}
-                  </div>
-                </Link>
-                <div className="p-3">
-                  {!isEditing ? (
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="font-medium truncate">{f.name}</div>
-                      <div className="flex items-center gap-2">
-                        <button onClick={() => startRename(f.path, f.name)} className="px-2 py-1 rounded bg-white/10 text-white text-sm hover:bg-white/20">Renommer</button>
-                        <button onClick={() => onDelete(f.path)} className="px-2 py-1 rounded bg-red-600/80 text-white text-sm hover:bg-red-600">Supprimer</button>
-                      </div>
-                    </div>
+              <article
+                key={a.id}
+                className="relative overflow-hidden rounded-2xl border border-white/25 bg-white/5 shadow-sm"
+              >
+                {/* COVER cliquable (uniquement la zone image) */}
+                <div className="relative aspect-video w-full overflow-hidden bg-black/30">
+                  {cover ? (
+                    <Image
+                      src={cover}
+                      alt={a.name}
+                      width={800}
+                      height={450}
+                      className="h-full w-full object-cover transition-transform duration-300 hover:scale-105"
+                      unoptimized
+                    />
                   ) : (
-                    <div className="flex items-center gap-2">
-                      <input value={editingName} onChange={e=>setEditingName(e.target.value)} className="flex-1 px-2 py-1 rounded border bg-white/5 text-white" />
-                      <button onClick={confirmRename} className="px-2 py-1 rounded bg-black text-white text-sm">OK</button>
-                      <button onClick={cancelRename} className="px-2 py-1 rounded bg-white/10 text-white text-sm">Annuler</button>
-                    </div>
+                    <div className="grid h-full w-full place-items-center text-white/80">📚 {a.name}</div>
                   )}
+                  <Link href={href} prefetch={false} aria-label={`Ouvrir ${a.name}`} className="absolute inset-0" />
                 </div>
-              </div>
+
+                {/* dégradés visuels */}
+                <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-black/40 to-transparent" />
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/70 to-transparent" />
+
+                {/* Barre infos + actions */}
+                <div className="relative z-10 flex items-center justify-between gap-2 px-3 py-2 text-sm border-t border-white/10">
+                  <div className="min-w-0">
+                    {a.createdAt && (
+                      <div className="text-xs text-white/70">{new Date(a.createdAt).toLocaleDateString("fr-FR")}</div>
+                    )}
+                    <div className="truncate font-semibold">{a.name}</div>
+                  </div>
+                  <div className="ml-auto flex items-center gap-2">
+                    <button onClick={() => onRename(a)}
+                            className="rounded px-2 py-1 border border-white/20 hover:bg-white/10">
+                      Renommer
+                    </button>
+                    <button onClick={() => onDelete(a)}
+                            className="rounded px-2 py-1 border border-red-400/40 text-red-300 hover:bg-red-500/10">
+                      Supprimer
+                    </button>
+                  </div>
+                </div>
+              </article>
             );
           })}
         </div>

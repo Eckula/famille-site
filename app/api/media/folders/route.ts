@@ -1,156 +1,148 @@
 // app/api/media/folders/route.ts
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { v2 as cloudinary } from "cloudinary";
+import { requireAdmin } from "../../_admin";
 
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME!,
-  api_key: process.env.CLOUDINARY_API_KEY!,
-  api_secret: process.env.CLOUDINARY_API_SECRET!,
-});
+// -------- utils ----------
+const ok = (data: any, status = 200) =>
+  NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });
 
-// --- caches mémoire (déjà vus) ---------------------------------------------
-const FOLDERS_CACHE = new Map<string, { at: number; data: any }>();
-const FOLDERS_TTL = Number(process.env.FOLDERS_TTL_MS || 5 * 60 * 1000);
-
-function ok(json: any, extraHeaders?: Record<string, string>) {
-  return NextResponse.json(json, {
-    headers: { "Cache-Control": `s-maxage=${Math.floor(FOLDERS_TTL / 1000)}`, ...extraHeaders },
-  });
+function ensureCloudinary() {
+  const cn = process.env.CLOUDINARY_CLOUD_NAME || process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
+  const ak = process.env.CLOUDINARY_API_KEY;
+  const as = process.env.CLOUDINARY_API_SECRET;
+  if (!cn || !ak || !as) throw new Error("Cloudinary: variables manquantes (cloud_name/api_key/api_secret).");
+  cloudinary.config({ cloud_name: cn, api_key: ak, api_secret: as, secure: true });
 }
-function err(status: number, message: string, extra?: any) {
-  return NextResponse.json({ error: message, ...extra }, { status });
+
+function chunk<T>(arr: T[], size = 100) {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
 }
-function parentOf(path: string) { return path.split("/").slice(0, -1).join("/"); }
 
-// --- helpers ----------------------------------------------------------------
+// Liste tous les public_id sous un préfixe pour un resource_type donné
+async function listPublicIdsByPrefix(prefix: string, resource_type: "image"|"video"|"raw") {
+  const ids: string[] = [];
+  let next: string | undefined = undefined;
+  do {
+    // @ts-ignore
+    const res = await cloudinary.api.resources({
+      type: "upload",
+      resource_type,
+      prefix,
+      max_results: 500,
+      next_cursor: next,
+    });
+    const resources = Array.isArray(res?.resources) ? res.resources : [];
+    ids.push(...resources.map((r: any) => r.public_id));
+    next = res?.next_cursor;
+  } while (next);
+  return ids;
+}
 
-// Fallback pour renommer un "dossier" Cloudinary si rename_folder indisponible.
-// On déplace toutes les ressources de from/ vers to/ puis on supprime le dossier source.
-async function moveFolderByPrefix(from: string, to: string) {
-  const types: Array<"image" | "video" | "raw"> = ["image", "video", "raw"];
-  for (const rt of types) {
-    let next_cursor: string | undefined;
-    for (let i = 0; i < 20; i++) { // borné
-      const res = await cloudinary.api.resources({
-        type: "upload",
-        resource_type: rt,
-        prefix: `${from}/`,
-        max_results: 500,
-        next_cursor,
-      });
-      for (const r of res.resources ?? []) {
-        const oldId = r.public_id as string;             // ex: "from/a/b/c"
-        const rest  = oldId.slice(from.length + 1);      // "a/b/c"
-        const newId = `${to}/${rest}`;                   // "to/a/b/c"
-        try {
-          await cloudinary.uploader.rename(oldId, newId, { resource_type: rt, overwrite: true });
-        } catch { /* on continue pour les autres */ }
+// Supprime par lots les IDs pour un resource_type
+async function deleteIds(resource_type: "image"|"video"|"raw", ids: string[]) {
+  for (const group of chunk(ids, 100)) {
+    // @ts-ignore
+    await cloudinary.api.delete_resources(group, { resource_type });
+  }
+}
+
+// Liste récursivement les sous-dossiers d’un path
+async function listSubfolders(path: string): Promise<{ name: string; path: string }[]> {
+  const out: { name: string; path: string }[] = [];
+  let next: string | undefined = undefined;
+  do {
+    // @ts-ignore
+    const res = await cloudinary.api.sub_folders(path, { max_results: 500, next_cursor: next });
+    const folders = Array.isArray(res?.folders) ? res.folders : [];
+    out.push(...folders.map((f: any) => ({ name: f.name, path: f.path || `${path}/${f.name}` })));
+    next = res?.next_cursor;
+  } while (next);
+  return out;
+}
+
+// Purge récursivement un dossier : ressources (image/video/raw) + sous-dossiers
+async function purgeFolderRecursive(path: string) {
+  for (const rt of ["image", "video", "raw"] as const) {
+    const ids = await listPublicIdsByPrefix(path, rt);
+    if (ids.length) await deleteIds(rt, ids);
+  }
+  const subs = await listSubfolders(path);
+  for (const sf of subs) {
+    await purgeFolderRecursive(sf.path);
+  }
+  // @ts-ignore
+  await cloudinary.api.delete_folder(path);
+}
+
+/** ----------------------
+ * POST -> créer un dossier
+ * body: { path?: string, folder?: string }
+ * ---------------------- */
+export async function POST(req: Request) {
+  const deny = await requireAdmin(req);
+  if (deny) return deny;
+
+  try {
+    ensureCloudinary();
+    const body = await req.json().catch(() => ({}));
+    const path = String(body?.path ?? body?.folder ?? "").trim().replace(/\/+$/, "");
+    if (!path) return ok({ error: "Paramètre `path` (ou `folder`) requis." }, 400);
+
+    try {
+      // @ts-ignore
+      const res = await cloudinary.api.create_folder(path);
+      return ok({ ok: true, res });
+    } catch (e: any) {
+      const msg = e?.error?.message || e?.message || String(e);
+      if (/already exists/i.test(msg)) return ok({ ok: true, note: "Folder already exists." });
+      return ok({ error: msg }, 500);
+    }
+  } catch (e: any) {
+    return ok({ error: e?.message || "Erreur interne" }, 500);
+  }
+}
+
+/** ----------------------
+ * DELETE -> supprimer dossier
+ * body: { path: string, force?: boolean }
+ * - force=false : supprime seulement si vide
+ * - force=true  : purge toutes ressources + sous-dossiers, puis supprime
+ * ---------------------- */
+export async function DELETE(req: Request) {
+  const deny = await requireAdmin(req);
+  if (deny) return deny;
+
+  try {
+    ensureCloudinary();
+    const body = await req.json().catch(() => ({}));
+    const path = String(body?.path ?? body?.folder ?? "").trim().replace(/\/+$/, "");
+    const force = !!body?.force;
+    if (!path) return ok({ error: "Paramètre `path` (ou `folder`) requis." }, 400);
+
+    try {
+      if (force) {
+        await purgeFolderRecursive(path);
+        return ok({ ok: true, res: { deleted: "recursive" } });
       }
-      next_cursor = res.next_cursor;
-      if (!next_cursor) break;
-    }
-  }
-  // supprime le dossier (vide à ce stade)
-  try { await cloudinary.api.delete_folder(from); } catch {}
-}
-
-/** GET /api/media/folders?root=<chemin> */
-export async function GET(req: NextRequest) {
-  const root = req.nextUrl.searchParams.get("root");
-  if (!root) return ok({ items: [] });
-
-  const key = `subfolders:${root}`;
-  const now = Date.now();
-  const cached = FOLDERS_CACHE.get(key);
-  if (cached && now - cached.at < FOLDERS_TTL) return ok(cached.data);
-
-  try {
-    const res = await cloudinary.api.sub_folders(root);
-    const items = (res?.folders || []).map((f: any) => ({ path: f.path as string, name: f.name as string }));
-    const payload = { items };
-    FOLDERS_CACHE.set(key, { at: now, data: payload });
-    return ok(payload);
-  } catch (e: any) {
-    const code = e?.http_code || e?.status || 500;
-    const msg = e?.error?.message || e?.message || String(e);
-    if (code === 404) return ok({ items: [] });
-    if (code === 420 || code === 429) return err(503, "rate_limited", { retryAfter: 60 });
-    return err(500, msg);
-  }
-}
-
-/** POST /api/media/folders  Body: { path } */
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
-    const path: string = body?.path || body?.folderPath || body?.folder;
-    if (!path) return err(400, "path manquant");
-    const res = await cloudinary.api.create_folder(path);
-    FOLDERS_CACHE.delete(`subfolders:${parentOf(path)}`);
-    return ok({ ok: true, res });
-  } catch (e: any) {
-    const msg = e?.error?.message || e?.message || String(e);
-    return err(500, msg);
-  }
-}
-
-/** PATCH /api/media/folders  Body: { from: string, to: string }  (renommer/déplacer un dossier) */
-export async function PATCH(req: NextRequest) {
-  try {
-    const body = await req.json();
-    const from: string = body?.from || body?.src || body?.fromPath;
-    const to: string   = body?.to   || body?.dest || body?.toPath;
-    if (!from || !to) return err(400, "from/to manquants");
-
-    // 1) tente l'API native rename_folder si dispo
-    const anyApi: any = (cloudinary as any).api;
-    if (typeof anyApi?.rename_folder === "function") {
-      await anyApi.rename_folder(from, to);
-    } else {
-      // 2) fallback fiable : déplacer toutes les ressources par préfixe
-      await moveFolderByPrefix(from, to);
-    }
-
-    // invalider caches parents
-    FOLDERS_CACHE.delete(`subfolders:${parentOf(from)}`);
-    FOLDERS_CACHE.delete(`subfolders:${parentOf(to)}`);
-
-    return ok({ ok: true, from, to });
-  } catch (e: any) {
-    const msg = e?.error?.message || e?.message || String(e);
-    return err(500, msg);
-  }
-}
-
-/** DELETE /api/media/folders  Body: { path, recursive?: boolean } */
-export async function DELETE(req: NextRequest) {
-  try {
-    const body = await req.json();
-    const path: string = body?.path;
-    const recursive: boolean = !!body?.recursive;
-    if (!path) return err(400, "path manquant");
-
-    if (recursive) {
-      for (const rt of ["image", "video", "raw"] as const) {
-        try { await cloudinary.api.delete_resources_by_prefix(path, { resource_type: rt }); } catch {}
+      // @ts-ignore
+      const res = await cloudinary.api.delete_folder(path);
+      return ok({ ok: true, res });
+    } catch (e: any) {
+      const msg = e?.error?.message || e?.message || String(e);
+      if (/not found/i.test(msg)) return ok({ ok: true, note: "Folder not found (déjà supprimé ?)" });
+      if (/is not empty|has subfolders/i.test(msg)) {
+        return ok({ error: "Le dossier n’est pas vide (ou contient des sous-dossiers). Utilise force=true pour purger." }, 400);
       }
-      try { const sub = await cloudinary.api.sub_folders(path);
-        for (const sf of sub.folders ?? []) { try { await cloudinary.api.delete_folder(sf.path); } catch {} }
-      } catch {}
-      try { await cloudinary.api.delete_folder(path); } catch {}
-    } else {
-      await cloudinary.api.delete_folder(path);
+      return ok({ error: msg }, 500);
     }
-
-    FOLDERS_CACHE.delete(`subfolders:${parentOf(path)}`);
-    return ok({ ok: true, deleted: path });
   } catch (e: any) {
-    const code = e?.http_code || 500;
-    const msg = e?.error?.message || e?.message || String(e);
-    if (code === 404) return ok({ ok: true, deleted: "already_missing" });
-    return err(500, msg);
+    return ok({ error: e?.message || "Erreur interne" }, 500);
   }
 }

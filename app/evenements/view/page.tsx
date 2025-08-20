@@ -1,75 +1,92 @@
 // app/evenements/view/page.tsx
-"use client";
+'use client';
 
-import { useEffect, useMemo, useState } from "react";
+import * as React from 'react';
+import { useSearchParams } from 'next/navigation';
 
-type Item = {
-  id: string;
+type ApiItem = {
   public_id: string;
-  kind: "image" | "video" | "document";
-  title: string;
-  url: string;
-  thumb?: string;
-  createdAt: string;
-  format?: string;
-  folder?: string;
+  secure_url?: string;
+  url?: string;
+  resource_type?: 'image' | 'video' | 'raw';
 };
 
-export default function EvenementView() {
-  const [path, setPath] = useState<string>("");
-  const [items, setItems] = useState<Item[]>([]);
-  const [loading, setLoading] = useState(true);
+const CLOUD =
+  process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME ||
+  process.env.CLOUDINARY_CLOUD_NAME ||
+  '';
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const p = new URLSearchParams(window.location.search).get("path") || "";
-    setPath(p);
-  }, []);
+function cldThumb(id: string) {
+  const encoded = encodeURIComponent(id);
+  return `https://res.cloudinary.com/${CLOUD}/image/upload/f_auto,q_auto,w_800/${encoded}`;
+}
 
-  useEffect(() => {
-    if (!path) return;
+export default function EvenementViewPage() {
+  const sp = useSearchParams();
+  const folderId = sp.get('folderId') || '';
+  const [items, setItems] = React.useState<ApiItem[] | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let alive = true;
     (async () => {
-      setLoading(true);
       try {
-        // on réutilise /api/media/list et on filtre côté Cloudinary via folder:
-        const r = await fetch("/api/media/list", { cache: "no-store" });
-        const j = await r.json();
-        const all: Item[] = j.items ?? [];
-        setItems(all.filter((it) => (it.public_id || "").startsWith(path + "/")));
-      } finally {
-        setLoading(false);
+        setError(null);
+        setItems(null);
+        if (!folderId) return setItems([]);
+
+        const res = await fetch(
+          `/api/media/list?view=folder&folderId=${encodeURIComponent(folderId)}&tab=images`,
+          { cache: 'no-store' }
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json: any = await res.json();
+        const list: ApiItem[] = Array.isArray(json) ? json : (json.items || json.data || []);
+        const onlyImages = list.filter((x) => (x.resource_type ?? 'image') === 'image');
+        if (alive) setItems(onlyImages);
+      } catch (e: any) {
+        if (alive) {
+          setError(e?.message || 'Erreur de chargement');
+          setItems([]);
+        }
       }
     })();
-  }, [path]);
-
-  const images = useMemo(() => items.filter(i => i.kind === "image"), [items]);
+    return () => { alive = false; };
+  }, [folderId]);
 
   return (
-    <main className="px-6 py-20 text-white">
-      <h1 className="text-3xl font-bold mb-2">Événement</h1>
-      <p className="mb-4 text-white/80"><code>{path || "—"}</code></p>
+    <div style={{ padding: 16 }}>
+      <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 10 }}>Événement</h1>
 
-      {loading ? (
-        <p>Chargement…</p>
-      ) : items.length === 0 ? (
-        <p>Aucun média.</p>
-      ) : (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-          {items.map((m) => (
-            <div key={m.id} className="rounded-lg border border-white/20 overflow-hidden">
-              <div className="aspect-[4/3]">
-                {m.kind === "image" ? (
-                  <img src={m.thumb ?? m.url} alt={m.title} className="w-full h-full object-cover" />
-                ) : m.kind === "video" ? (
-                  <video src={m.url} className="w-full h-full object-cover" preload="metadata" muted />
-                ) : (
-                  <div className="w-full h-full grid place-items-center bg-white/5 text-white/90">{m.title}</div>
-                )}
+      {error && <div style={{ color: 'salmon', marginBottom: 8 }}>{error}</div>}
+      {items === null && <p>Chargement…</p>}
+      {items && items.length === 0 && <p>Aucun média dans ce dossier.</p>}
+
+      {items && items.length > 0 && (
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+          gap: 12
+        }}>
+          {items.map((it) => (
+            <a key={it.public_id} href={cldThumb(it.public_id)} target="_blank" rel="noreferrer"
+               style={{
+                 display: 'block', position: 'relative', borderRadius: 8, overflow: 'hidden',
+                 border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.05)'
+               }}>
+              <img src={cldThumb(it.public_id)} alt={it.public_id}
+                   loading="lazy" style={{ width: '100%', height: 220, objectFit: 'cover' }} />
+              <div style={{
+                position: 'absolute', left: 0, right: 0, bottom: 0, padding: '6px 8px',
+                background: 'linear-gradient(to top, rgba(0,0,0,0.55), rgba(0,0,0,0.2), transparent)',
+                color: '#fff', fontSize: 12
+              }}>
+                {it.public_id}
               </div>
-            </div>
+            </a>
           ))}
         </div>
       )}
-    </main>
+    </div>
   );
 }

@@ -9,13 +9,18 @@
     "start": "next start",
     "lint": "next lint",
     "postinstall": "prisma generate",
-    "fix:prisma": "node scripts/fixPrismaImports.mjs"
+    "fix:prisma": "node scripts/fixPrismaImports.mjs",
+    "import:folders": "node scripts/import_folders_from_cloudinary.js",
+    "reindex:media": "node scripts/reindex_media_from_cloudinary.js",
+    "assign:tokens": "node scripts/assign_by_tokens.js",
+    "assign:all-photos": "node scripts/assign_all_photos_to_mes_fichiers.js"
   },
   "dependencies": {
     "@prisma/client": "^6.14.0",
     "@tailwindcss/postcss": "^4.1.11",
     "autoprefixer": "^10.4.21",
     "cloudinary": "^2.7.0",
+    "dotenv": "^16.6.1",
     "jose": "^6.0.12",
     "jsonwebtoken": "^9.0.2",
     "next": "15.4.1",
