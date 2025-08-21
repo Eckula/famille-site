@@ -1,3 +1,4 @@
+import prisma from "../../../../lib/prisma";
 // app/api/folders/move/route.ts
 import { NextResponse } from "next/server";
 import { PrismaClient, type MediaIndex as MediaIndexType } from "@prisma/client";
@@ -6,7 +7,6 @@ import { requireAdmin } from "../../_admin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const prisma = new PrismaClient();
 const ok = (data: any, status = 200) =>
   NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });
 

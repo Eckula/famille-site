@@ -1,14 +1,13 @@
+import prisma from "../../../../../lib/prisma";
 // app/api/folders/create/route.ts
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import { NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
 // Si tu veux restreindre aux admins, dé-commente et garde le check plus bas
 // import { requireAdmin } from "../../_admin";
 
-const prisma = new PrismaClient();
 const ok = (d: any, s = 200) =>
   NextResponse.json(d, { status: s, headers: { "Cache-Control": "no-store" } });
 

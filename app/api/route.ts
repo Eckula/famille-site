@@ -1,11 +1,9 @@
+import prisma from "../../lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { v2 as cloudinary } from "cloudinary";
-import { PrismaClient } from "@prisma/client";
-
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const prisma = new PrismaClient();
 const ROOT = (process.env.CLOUDINARY_ROOT_FOLDER || "famille").trim();
 const MAX = 5000;
 

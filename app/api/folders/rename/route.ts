@@ -1,12 +1,11 @@
+import prisma from "../../../../lib/prisma";
 // app/api/folders/rename/route.ts
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
 import { requireAdmin } from "../../_admin";
 
-const prisma = new PrismaClient();
 const ok = (d:any,s=200)=>NextResponse.json(d,{status:s,headers:{'Cache-Control':'no-store'}});
 
 export async function POST(req: Request) {
