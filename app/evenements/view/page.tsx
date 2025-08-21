@@ -1,14 +1,19 @@
 // app/evenements/view/page.tsx
 'use client';
+/* eslint-disable @next/next/no-img-element */
+
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 import * as React from 'react';
+import { Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 
 type ApiItem = {
   public_id: string;
+  resource_type?: 'image' | 'video' | 'raw';
   secure_url?: string;
   url?: string;
-  resource_type?: 'image' | 'video' | 'raw';
 };
 
 const CLOUD =
@@ -21,9 +26,8 @@ function cldThumb(id: string) {
   return `https://res.cloudinary.com/${CLOUD}/image/upload/f_auto,q_auto,w_800/${encoded}`;
 }
 
-export default function EvenementViewPage() {
-  const sp = useSearchParams();
-  // ✅ évite l'accès direct quand sp peut être null
+function ViewInner() {
+  const sp = useSearchParams();                     // ✅ OK ici (dans un composant enfant)
   const folderId = React.useMemo(() => sp?.get('folderId') ?? '', [sp]);
 
   const [items, setItems] = React.useState<ApiItem[] | null>(null);
@@ -113,5 +117,14 @@ export default function EvenementViewPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function EvenementViewPage() {
+  // ✅ Le hook de navigation est dans ViewInner, ici on entoure d’un Suspense
+  return (
+    <Suspense fallback={<div style={{ padding: 16 }}>Chargement…</div>}>
+      <ViewInner />
+    </Suspense>
   );
 }
