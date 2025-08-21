@@ -3,11 +3,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
 import { v2 as cloudinary } from "cloudinary";
+import prisma from "@/lib/prisma";               // ← singleton (recommandé)
 import { requireAdmin } from "../../_admin";
 
-const prisma = new PrismaClient();
 const ROOT = (process.env.CLOUDINARY_ROOT_FOLDER || "famille").trim();
 
 function ensureCloudinary() {
@@ -22,10 +21,10 @@ const ok = (d: any, s = 200) =>
   NextResponse.json(d, { status: s, headers: { "Cache-Control": "no-store" } });
 
 /**
- * Body attendu:
+ * Body:
  * { parentName: "Albums" | "Evenements", name: "Mon album" }
  * -> crée le dossier Cloudinary `${ROOT}/${parentName}/${name}`
- * -> assure la présence des enregistrements Prisma (parent + enfant)
+ * -> assure la présence côté Prisma (parent + enfant dans AppFolder)
  */
 export async function POST(req: NextRequest) {
   const deny = await requireAdmin(req);
@@ -41,18 +40,20 @@ export async function POST(req: NextRequest) {
 
     // 1) Cloudinary (idempotent)
     const clPath = `${ROOT}/${parent}/${child}`;
-    try { /* @ts-ignore */ await cloudinary.api.create_folder(clPath); }
-    catch (e: any) {
+    try {
+      // @ts-ignore
+      await cloudinary.api.create_folder(clPath);
+    } catch (e: any) {
       const msg = e?.error?.message || e?.message || "";
       if (!/already exists/i.test(msg)) throw e;
     }
 
-    // 2) Prisma sans upsert composite (car parentId peut être NULL)
-    let p = await prisma.folder.findFirst({ where: { name: parent, parentId: null } });
-    if (!p) p = await prisma.folder.create({ data: { name: parent, parentId: null } });
+    // 2) Prisma (modèle AppFolder)
+    let p = await prisma.appFolder.findFirst({ where: { name: parent, parentId: null } });
+    if (!p) p = await prisma.appFolder.create({ data: { name: parent, parentId: null } });
 
-    let c = await prisma.folder.findFirst({ where: { name: child, parentId: p.id } });
-    if (!c) c = await prisma.folder.create({ data: { name: child, parentId: p.id } });
+    let c = await prisma.appFolder.findFirst({ where: { name: child, parentId: p.id } });
+    if (!c) c = await prisma.appFolder.create({ data: { name: child, parentId: p.id } });
 
     return ok({ ok: true, item: { id: c.id, name: c.name, parentId: c.parentId }, cloudinaryPath: clPath });
   } catch (e: any) {

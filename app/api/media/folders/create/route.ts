@@ -32,7 +32,7 @@ export async function POST(req: Request) {
 
     if (!name) return ok({ error: "Paramètre `name` requis." }, 400);
 
-    const folder = await prisma.folder.upsert({
+    const folder = await prisma.appFolder.upsert({
       where: { parentId_name: { parentId, name } },
       update: {},
       create: { name, parentId },

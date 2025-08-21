@@ -56,7 +56,7 @@ export async function GET() {
     ensureCloudinary();
 
     // 1) Dossiers BD
-    const folders = await prisma.folder.findMany({ orderBy: { createdAt: "asc" } });
+    const folders = await prisma.appFolder.findMany({ orderBy: { createdAt: "asc" } });
 
     // 2) Médias sous ROOT (même logique que la liste)
     //    Search root -> Admin prefix root -> Admin global puis filtrage par ROOT
@@ -108,7 +108,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const name = String(body?.name || "").trim();
     if (!name) return NextResponse.json({ error: "name requis" }, { status: 400 });
-    const created = await prisma.folder.create({ data: { name } });
+    const created = await prisma.appFolder.create({ data: { name } });
     return NextResponse.json(created);
   } catch (e: any) {
     if (e?.code === "P2002") return NextResponse.json({ error: "Nom déjà utilisé" }, { status: 409 });

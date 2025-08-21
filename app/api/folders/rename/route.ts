@@ -15,7 +15,7 @@ export async function POST(req: Request) {
   try {
     const { id, name } = await req.json();
     if (!id || !name) return ok({ error: "id et name requis" }, 400);
-    const row = await prisma.folder.update({ where: { id: String(id) }, data: { name: String(name) } });
+    const row = await prisma.appFolder.update({ where: { id: String(id) }, data: { name: String(name) } });
     return ok({ ok: true, item: row });
   } catch (e:any) {
     return ok({ error: e?.message || "Erreur" }, 500);

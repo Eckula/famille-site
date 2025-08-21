@@ -48,7 +48,7 @@ export async function GET() {
     let created = 0;
     for (const full of folders) {
       const name = full.split("/").pop()!;
-      await prisma.folder.upsert({
+      await prisma.appFolder.upsert({
         where: { parentId_name: { parentId: null, name } },
         update: {},
         create: { name, parentId: null },
