@@ -23,7 +23,9 @@ function cldThumb(id: string) {
 
 export default function EvenementViewPage() {
   const sp = useSearchParams();
-  const folderId = sp.get('folderId') || '';
+  // ✅ évite l'accès direct quand sp peut être null
+  const folderId = React.useMemo(() => sp?.get('folderId') ?? '', [sp]);
+
   const [items, setItems] = React.useState<ApiItem[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -33,7 +35,7 @@ export default function EvenementViewPage() {
       try {
         setError(null);
         setItems(null);
-        if (!folderId) return setItems([]);
+        if (!folderId) { setItems([]); return; }
 
         const res = await fetch(
           `/api/media/list?view=folder&folderId=${encodeURIComponent(folderId)}&tab=images`,
@@ -63,24 +65,47 @@ export default function EvenementViewPage() {
       {items && items.length === 0 && <p>Aucun média dans ce dossier.</p>}
 
       {items && items.length > 0 && (
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-          gap: 12
-        }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+            gap: 12,
+          }}
+        >
           {items.map((it) => (
-            <a key={it.public_id} href={cldThumb(it.public_id)} target="_blank" rel="noreferrer"
-               style={{
-                 display: 'block', position: 'relative', borderRadius: 8, overflow: 'hidden',
-                 border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.05)'
-               }}>
-              <img src={cldThumb(it.public_id)} alt={it.public_id}
-                   loading="lazy" style={{ width: '100%', height: 220, objectFit: 'cover' }} />
-              <div style={{
-                position: 'absolute', left: 0, right: 0, bottom: 0, padding: '6px 8px',
-                background: 'linear-gradient(to top, rgba(0,0,0,0.55), rgba(0,0,0,0.2), transparent)',
-                color: '#fff', fontSize: 12
-              }}>
+            <a
+              key={it.public_id}
+              href={cldThumb(it.public_id)}
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                display: 'block',
+                position: 'relative',
+                borderRadius: 8,
+                overflow: 'hidden',
+                border: '1px solid rgba(255,255,255,0.15)',
+                background: 'rgba(255,255,255,0.05)',
+              }}
+            >
+              <img
+                src={cldThumb(it.public_id)}
+                alt={it.public_id}
+                loading="lazy"
+                style={{ width: '100%', height: 220, objectFit: 'cover' }}
+              />
+              <div
+                style={{
+                  position: 'absolute',
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  padding: '6px 8px',
+                  background:
+                    'linear-gradient(to top, rgba(0,0,0,0.55), rgba(0,0,0,0.2), transparent)',
+                  color: '#fff',
+                  fontSize: 12,
+                }}
+              >
                 {it.public_id}
               </div>
             </a>
