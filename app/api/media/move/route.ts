@@ -4,7 +4,7 @@ export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
 import { v2 as cloudinary } from "cloudinary";
-import { requireAdmin } from "../../_admin";
+import { requireAdmin } from "@/app/api/_admin";
 
 const ok = (data: any, status = 200) =>
   NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });

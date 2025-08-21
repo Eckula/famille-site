@@ -5,7 +5,7 @@ export const revalidate = 0;
 
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { requireAdmin } from "../../../_admin"; // <- 3 niveaux (media/folders/create -> api/_admin)
+import { requireAdmin } from "@/app/api/_admin"; // <- 3 niveaux (media/folders/create -> api/_admin)
 
 // (optionnel) création côté Cloudinary si demandé par le client
 import { v2 as cloudinary } from "cloudinary";

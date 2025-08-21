@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { v2 as cloudinary } from "cloudinary";
 import prisma from "@/lib/prisma";               // ← singleton (recommandé)
-import { requireAdmin } from "../../_admin";
+import { requireAdmin } from "@/app/api/_admin";
 
 const ROOT = (process.env.CLOUDINARY_ROOT_FOLDER || "famille").trim();
 

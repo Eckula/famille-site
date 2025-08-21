@@ -4,7 +4,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
-import { requireAdmin } from "../../_admin";
+import { requireAdmin } from "@/app/api/_admin";
 
 const ok = (d:any,s=200)=>NextResponse.json(d,{status:s,headers:{'Cache-Control':'no-store'}});
 

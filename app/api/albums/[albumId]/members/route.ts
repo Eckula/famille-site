@@ -4,7 +4,7 @@ export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { requireAdmin } from "../../../_admin"; // ✅ 3 niveaux
+import { requireAdmin } from "@/app/api/_admin"; // ✅ 3 niveaux
 
 const ok = (data: any, status = 200) =>
   NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });

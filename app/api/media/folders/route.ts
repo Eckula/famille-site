@@ -5,7 +5,7 @@ export const revalidate = 0;
 
 import { NextResponse } from "next/server";
 import { v2 as cloudinary } from "cloudinary";
-import { requireAdmin } from "../../_admin";
+import { requireAdmin } from "@/app/api/_admin";
 
 // -------- utils ----------
 const ok = (data: any, status = 200) =>

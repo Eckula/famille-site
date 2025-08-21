@@ -4,7 +4,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { requireAdmin } from "../../_admin"; // <-- ajuste le chemin si besoin
+import { requireAdmin } from "@/app/api/_admin"; // <-- ajuste le chemin si besoin
 
 const ok = (data: any, status = 200) =>
   NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });

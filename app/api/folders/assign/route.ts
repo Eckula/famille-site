@@ -4,7 +4,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";            // ✅ singleton
-import { requireAdmin } from "../../_admin";  // doit renvoyer NextResponse | null
+import { requireAdmin } from "@/app/api/_admin";  // doit renvoyer NextResponse | null
 
 const ok = (data: any, status = 200) =>
   NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });
@@ -70,7 +70,7 @@ export async function POST(req: Request) {
     return ok({
       ok: true,
       count: res.length,
-      folderId: targetFolderId,
+      appFolderId: targetFolderId,
       folderName: folder.name,
       action: "assign",
     });

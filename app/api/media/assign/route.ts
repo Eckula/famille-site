@@ -4,7 +4,7 @@ export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { requireAdmin } from "../../_admin";
+import { requireAdmin } from "@/app/api/_admin";
 
 const ok = (d: any, s = 200) =>
   NextResponse.json(d, { status: s, headers: { "Cache-Control": "no-store" } });
@@ -101,7 +101,7 @@ export async function POST(req: Request) {
     return ok({
       ok: true,
       action,
-      folderId: targetFolderId, // alias lisible côté client
+      appFolderId: targetFolderId, // alias lisible côté client
       appFolderId: targetFolderId,
       ...results,
     });

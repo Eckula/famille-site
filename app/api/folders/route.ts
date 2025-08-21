@@ -1,7 +1,7 @@
 // app/api/folders/route.ts
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";         // ✅ singleton
-import { requireAdmin } from "../_admin";  // ✅ helper (retour NextResponse | null)
+import { requireAdmin } from "@/app/api/_admin";  // ✅ helper (retour NextResponse | null)
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
