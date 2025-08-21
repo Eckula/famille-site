@@ -1,3 +1,4 @@
+// app/api/folders/map/route.ts
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -8,10 +9,14 @@ const ok = (data: any, status = 200) =>
   NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });
 const bad = (msg: string, status = 500) => ok({ error: msg }, status);
 
+/**
+ * Renvoie { folderId -> nb médias } basé sur MediaIndex.appFolderId
+ * Aliases pour compatibilité: counts | mediaCount | mediaCountByFolderId | byFolderId
+ */
 export async function GET() {
   try {
     const rows = await prisma.mediaIndex.groupBy({
-      by: ["appFolderId"],              // 👈 on reste en appFolderId
+      by: ["appFolderId"],
       where: { appFolderId: { not: null } },
       _count: { _all: true },
     });

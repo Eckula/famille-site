@@ -4,41 +4,79 @@ export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { requireAdmin } from "../../../_admin"; // ✅ 3 niveaux
 
 const ok = (data: any, status = 200) =>
   NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });
-const bad = (msg: string, status = 400) => ok({ error: msg }, status);
 
-/**
- * Liste les dossiers membres d’un album (liens AlbumFolderLink).
- * Retour : { members: Array<{id,name,parentId,createdAt}> }
- */
+const bad = (message: string, status = 400) => ok({ error: message }, status);
+
+// GET /api/albums/[albumId]/members
 export async function GET(
   _req: Request,
-  ctx: { params: Promise<{ albumId: string }> } // ← Next 15 : params est un Promise
+  ctx: { params: Promise<{ albumId: string }> } // ✅ on attend params
 ) {
   try {
     const { albumId } = await ctx.params;
     if (!albumId) return bad("albumId manquant", 400);
 
-    // On lit les liens puis on récupère les infos dossiers
     const links = await prisma.albumFolderLink.findMany({
       where: { albumId },
+      select: { folderId: true, createdAt: true },
       orderBy: { createdAt: "desc" },
-      select: {
-        folderId: true,
-        folder: {
-          select: { id: true, name: true, parentId: true, createdAt: true },
-        },
-      },
     });
 
-    const members = links
-      .map((l) => l.folder)
-      .filter(Boolean) as Array<{ id: string; name: string; parentId: string | null; createdAt: Date }>;
-
-    return ok({ members });
+    return ok({ members: links });
   } catch (e: any) {
-    return bad(e?.message || "Erreur GET /api/albums/[albumId]/members", 500);
+    return bad(e?.message || "Erreur GET members", 500);
+  }
+}
+
+// POST /api/albums/[albumId]/members  { folderId }
+export async function POST(
+  req: Request,
+  ctx: { params: Promise<{ albumId: string }> }
+) {
+  const deny = await requireAdmin(req);
+  if (deny) return deny;
+
+  try {
+    const { albumId } = await ctx.params;
+    const body = await req.json().catch(() => ({}));
+    const folderId = String(body.folderId || "").trim();
+    if (!albumId || !folderId) return bad("albumId/folderId requis", 400);
+
+    // crée le lien (clé primaire composite albumId+folderId)
+    await prisma.albumFolderLink.create({ data: { albumId, folderId } });
+    return ok({ ok: true, albumId, folderId });
+  } catch (e: any) {
+    const msg = String(e?.message || e);
+    // si déjà présent, on considère OK idempotent
+    if (/Unique constraint/i.test(msg)) return ok({ ok: true, already: true });
+    return bad(msg || "Erreur POST members", 400);
+  }
+}
+
+// DELETE /api/albums/[albumId]/members  { folderId }
+export async function DELETE(
+  req: Request,
+  ctx: { params: Promise<{ albumId: string }> }
+) {
+  const deny = await requireAdmin(req);
+  if (deny) return deny;
+
+  try {
+    const { albumId } = await ctx.params;
+    const body = await req.json().catch(() => ({}));
+    const folderId = String(body.folderId || "").trim();
+    if (!albumId || !folderId) return bad("albumId/folderId requis", 400);
+
+    await prisma.albumFolderLink.delete({
+      where: { albumId_folderId: { albumId, folderId } },
+    });
+
+    return ok({ ok: true, albumId, folderId, removed: true });
+  } catch (e: any) {
+    return bad(e?.message || "Erreur DELETE members", 400);
   }
 }

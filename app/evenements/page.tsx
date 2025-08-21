@@ -2,9 +2,9 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 
+/* ===================== Types ===================== */
 type Folder = {
   id: string;
   name: string;
@@ -12,58 +12,108 @@ type Folder = {
   createdAt: string;
 };
 
-type CoverMap = Record<string, string | null>;
-
-const EVENTS_PARENT_NAME = "Evenements";         // nom du dossier parent en DB (sans accent)
-const CLOUD_ROOT = "famille/Evenements";         // chemin Cloudinary
-
-function parseEventMeta(name: string) {
-  // 2025-08-20 • Titre [EVT]  |  2025_08_20 - Titre
-  const m = name.match(
-    /^\s*(\d{4})[-_/\.](\d{2})[-_/\.](\d{2})\s*[•\-–]?\s*(.*?)(?:\s*\[EVT\])?\s*$/i
-  );
-  if (!m) {
-    return {
-      date: null as Date | null,
-      title: name.replace(/\s*\[EVT\]\s*$/i, "").trim() || name,
-    };
-  }
-  const [, Y, M, D, rest] = m;
-  const dt = new Date(Number(Y), Number(M) - 1, Number(D));
-  return { date: isNaN(+dt) ? null : dt, title: (rest || "").trim() || name };
-}
-
-function isEventFolder(f: Folder) {
-  return /\[EVT\]/i.test(f.name) || /^\s*\d{4}[-_/\.]\d{2}[-_/\.]\d{2}/.test(f.name);
-}
-
+/* ===================== Fetch helpers ===================== */
 async function getJSON<T = any>(url: string): Promise<T> {
   const r = await fetch(url, { cache: "no-store" });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || (j as any)?.error) throw new Error((j as any)?.error || `HTTP ${r.status}`);
+  return j as T;
+}
+async function patchFolder(
+  id: string,
+  data: Partial<{ name: string; parentId: string | null }>
+) {
+  const r = await fetch("/api/folders", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id, ...data }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j?.error) throw new Error(j?.error || `HTTP ${r.status}`);
+  return j;
+}
+async function deleteFolder(id: string) {
+  const r = await fetch("/api/folders", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j?.error) throw new Error(j?.error || `HTTP ${r.status}`);
+  return j;
 }
 
-export default function EventsPage() {
-  const [folders, setFolders] = useState<Folder[]>([]);
-  const [covers, setCovers] = useState<CoverMap>({});
+/* ===================== Nom d’évènement ===================== */
+// Accepte: "YYYY-MM-DD • Titre [EVT]" ou variantes avec / . -  et sans titre.
+function parseEventMeta(name: string): { date?: Date; title?: string } {
+  const s = name.trim();
+
+  let m = s.match(
+    /^(\d{4})[\/\-.](\d{2})[\/\-.](\d{2})(?:\s*[•\-–]\s*(.*?))?(?:\s*\[(?:EVT|EVENT)\])?$/i
+  );
+  if (m) {
+    const y = Number(m[1]),
+      mo = Number(m[2]),
+      d = Number(m[3]);
+    const date = new Date(Date.UTC(y, mo - 1, d));
+    const title = (m[4] || "").trim() || undefined;
+    return { date, title };
+  }
+
+  m = s.match(/^(\d{4})[\/\-.](\d{2})[\/\-.](\d{2})$/);
+  if (m) {
+    const y = Number(m[1]),
+      mo = Number(m[2]),
+      d = Number(m[3]);
+    return { date: new Date(Date.UTC(y, mo - 1, d)) };
+  }
+
+  return {};
+}
+function formatEventName(date: Date, title: string) {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(date.getUTCDate()).padStart(2, "0");
+  const t = title.trim().replace(/\s+/g, " ");
+  return `${y}-${m}-${d} • ${t} [EVT]`;
+}
+
+/* ===================== Page ===================== */
+export default function EvenementsPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+  const [events, setEvents] = useState<Folder[]>([]);
+  const [q, setQ] = useState("");
 
-  // formulaire
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  // Compteurs de médias par dossier (facultatif si /api/folders/map existe)
+  const [countMap, setCountMap] = useState<Record<string, number>>({});
+
+  // Formulaire de création
+  const [dateStr, setDateStr] = useState(() => new Date().toISOString().slice(0, 10));
   const [title, setTitle] = useState("");
 
-  // ---- Chargement des dossiers enfants d'Evenements ----
   async function refresh() {
     setLoading(true);
     setErr("");
     try {
-      const j = await getJSON<{ items: Folder[] }>(
-        `/api/folders?parentName=${encodeURIComponent(EVENTS_PARENT_NAME)}`
-      );
-      setFolders(Array.isArray(j?.items) ? j.items : []);
+      const res = await getJSON<{ items: Folder[] }>("/api/folders?parentName=Evenements");
+      setEvents(Array.isArray(res?.items) ? res.items : []);
+
+      try {
+        const m = await getJSON<{
+          counts?: Record<string, number>;
+          mediaCount?: Record<string, number>;
+          mediaCountByFolderId?: Record<string, number>;
+          byFolderId?: Record<string, number>;
+        }>("/api/folders/map");
+        const map =
+          m.counts || m.mediaCount || m.mediaCountByFolderId || m.byFolderId || {};
+        setCountMap(map);
+      } catch {
+        setCountMap({});
+      }
     } catch (e: any) {
-      setErr(e?.message || "Erreur de chargement.");
+      setErr(e?.message || "Erreur chargement évènements");
     } finally {
       setLoading(false);
     }
@@ -72,66 +122,77 @@ export default function EventsPage() {
     refresh();
   }, []);
 
-  // ---- Tri + parsing métadonnées ----
-  const events = useMemo(() => {
-    const list = folders.filter(isEventFolder).map((f) => ({ f, meta: parseEventMeta(f.name) }));
-    return list.sort((a, b) => {
-      const da = a.meta.date?.getTime() ?? new Date(a.f.createdAt).getTime();
-      const db = b.meta.date?.getTime() ?? new Date(b.f.createdAt).getTime();
-      return db - da;
-    });
-  }, [folders]);
+  const list = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return events;
+    return events.filter((f) => f.name.toLowerCase().includes(s) || f.id.toLowerCase().includes(s));
+  }, [events, q]);
 
-  // ---- Couvertures (1re image par dossier via /api/media/list) ----
-  useEffect(() => {
-    let stop = false;
-    (async () => {
-      const queue = [...events];
-      const concurrency = 4;
-      const worker = async () => {
-        const it = queue.shift();
-        if (!it || stop) return;
-        try {
-          const u = new URL("/api/media/list", window.location.origin);
-          u.searchParams.set("folderId", it.f.id); // la route sait mapper sur appFolderId
-          u.searchParams.set("tab", "images");
-          const j: any = await getJSON(u.toString());
-          const first = Array.isArray(j?.items) ? j.items[0] : null;
-          setCovers((m) => ({ ...m, [it.f.id]: first?.thumb || first?.url || null }));
-        } catch {
-          setCovers((m) => ({ ...m, [it.f.id]: null }));
-        }
-        await worker();
-      };
-      await Promise.all(Array.from({ length: concurrency }, worker));
-    })();
-    return () => {
-      stop = true;
-    };
-  }, [events]);
+  /* ---------- Renommer ---------- */
+  async function onRename(f: Folder) {
+    const meta = parseEventMeta(f.name);
+    const baseDate = meta.date || new Date(f.createdAt);
+    const currentTitle = meta.title || "";
 
-  // ---- Création d'un événement ----
-  async function createEvent() {
-    const niceName = `${date} • ${title || "Événement"} [EVT]`;
+    const newTitle = prompt("Nouveau titre de l’évènement :", currentTitle)?.trim();
+    if (!newTitle) return;
+
     try {
-      // 1) dossier Cloudinary
-      let r = await fetch("/api/media/folders", {
+      const newName = formatEventName(baseDate, newTitle);
+      await patchFolder(f.id, { name: newName });
+      await refresh();
+    } catch (e: any) {
+      alert(e?.message || "Renommage impossible.");
+    }
+  }
+
+  /* ---------- Supprimer ---------- */
+  async function onDelete(f: Folder) {
+    if (!confirm(`Supprimer l’évènement "${f.name}" ?`)) return;
+    try {
+      await deleteFolder(f.id);
+      await refresh();
+    } catch (e: any) {
+      alert(e?.message || "Suppression impossible.");
+    }
+  }
+
+  /* ---------- Créer ---------- */
+  async function onCreate() {
+    try {
+      // 1) Nom propre
+      const safeDate = new Date(`${dateStr}T00:00:00Z`);
+      const nice = formatEventName(safeDate, title || "Événement");
+
+      // 2) Dossier Cloudinary (soft-fail si l’API n’existe pas)
+      try {
+        const path = `famille/Evenements/${nice}`; // adapte si ton root diffère
+        const r = await fetch("/api/media/folders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path }),
+        });
+        const j = await r.json().catch(() => ({}));
+        // pas bloquant si 404 sur cette route — on continue
+        if (!r.ok && !j?.ok && !j?.created) {
+          // eslint-disable-next-line no-console
+          console.warn("Création Cloudinary: warning", j);
+        }
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn("Création Cloudinary: ignorée", e);
+      }
+
+      // 3) Dossier DB sous "Evenements"
+      const r2 = await fetch("/api/folders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: `${CLOUD_ROOT}/${niceName}` }),
+        body: JSON.stringify({ name: nice, parentName: "Evenements" }),
       });
-      let j = await r.json();
-      if (!r.ok || j?.error) throw new Error(j?.error || `HTTP ${r.status}`);
+      const j2 = await r2.json().catch(() => ({}));
+      if (!r2.ok || j2?.error) throw new Error(j2?.error || `HTTP ${r2.status}`);
 
-      // 2) dossier DB sous "Evenements"
-      r = await fetch("/api/folders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: niceName, parentName: EVENTS_PARENT_NAME }),
-      });
-      j = await r.json();
-      if (!r.ok || j?.error) throw new Error(j?.error || `HTTP ${r.status}`);
-
+      // reset + refresh
       setTitle("");
       await refresh();
     } catch (e: any) {
@@ -139,34 +200,49 @@ export default function EventsPage() {
     }
   }
 
-  // ---- UI ----
   return (
-    <main className="px-6 py-24 text-white">
-      <h1 className="mb-2 text-3xl font-bold">Événements</h1>
-      <p className="text-white/80 mb-4">
-        Sous-dossiers de <code>{CLOUD_ROOT}</code> (format :{" "}
-        <code>YYYY-MM-DD • Titre [EVT]</code>).
-      </p>
+    <main className="px-4 py-6 text-white sm:px-6 lg:px-8">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <h1 className="text-3xl font-bold">Événements</h1>
 
-      {/* Formulaire création */}
-      <div className="mb-6 flex gap-2">
+        {/* Recherche */}
+        <div className="flex w-full max-w-xl items-center gap-2 sm:w-auto">
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Rechercher par nom ou ID…"
+            className="w-full rounded border border-white/20 bg-black/40 px-3 py-2 text-white placeholder-white/50 sm:w-72"
+          />
+          <button
+            onClick={() => setQ("")}
+            className="rounded border border-white/20 px-3 py-2 text-white/80 hover:bg-white/10"
+          >
+            Effacer
+          </button>
+        </div>
+      </div>
+
+      {/* Formulaire de création */}
+      <div className="mb-8 flex flex-col gap-2 sm:flex-row sm:items-center">
+        <label className="text-sm text-white/70">Date</label>
         <input
           type="date"
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
-          className="rounded border border-white/25 bg-black/30 px-3 py-2"
+          value={dateStr}
+          onChange={(e) => setDateStr(e.target.value)}
+          className="w-[180px] rounded border border-white/20 bg-black/40 px-3 py-2 text-white"
         />
+        <label className="text-sm text-white/70 sm:ml-4">Titre</label>
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder="Titre"
-          className="flex-1 rounded border border-white/25 bg-black/30 px-3 py-2"
+          placeholder="Titre de l’évènement"
+          className="flex-1 rounded border border-white/20 bg-black/40 px-3 py-2 text-white"
         />
         <button
-          onClick={createEvent}
-          className="rounded bg-emerald-400 px-3 py-2 text-black hover:bg-emerald-300"
+          onClick={onCreate}
+          className="rounded bg-emerald-400 px-3 py-2 font-medium text-black hover:bg-emerald-300 sm:ml-2"
         >
-          Créer l’événement
+          Créer l’évènement
         </button>
       </div>
 
@@ -174,46 +250,54 @@ export default function EventsPage() {
 
       {loading ? (
         <p className="text-white/70">Chargement…</p>
-      ) : events.length === 0 ? (
-        <p className="text-white/80">Aucun événement.</p>
+      ) : list.length === 0 ? (
+        <p className="text-white/70">Aucun évènement.</p>
       ) : (
-        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-          {events.map(({ f, meta }) => {
-            const cover = covers[f.id];
-            const when =
-              meta.date?.toLocaleDateString("fr-FR") ??
-              new Date(f.createdAt).toLocaleDateString("fr-FR");
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {list.map((f) => {
+            const c = countMap[f.id] ?? 0;
+            const meta = parseEventMeta(f.name);
+            const display =
+              meta?.title || f.name; // si tu veux n’afficher que le titre épuré
             return (
-              <Link
+              <div
                 key={f.id}
-                prefetch={false}
-                href={`/galerie?tab=all&view=folder&folderId=${encodeURIComponent(f.id)}`}
-                className="group relative overflow-hidden rounded-2xl border border-white/25 bg-white/5 shadow-sm hover:shadow-lg transition"
+                className="group relative overflow-hidden rounded-xl border border-white/15 bg-white/5"
               >
-                <div className="aspect-video w-full overflow-hidden bg-black/30">
-                  {cover ? (
-                    <Image
-                      src={cover}
-                      alt={meta.title}
-                      width={800}
-                      height={450}
-                      className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                      unoptimized
-                    />
-                  ) : (
-                    <div className="grid h-full w-full place-items-center text-white/80">
-                      📁 {meta.title}
-                    </div>
-                  )}
+                <div className="p-4">
+                  <div className="mb-1 truncate text-lg font-semibold">{display}</div>
+                  <div className="truncate text-xs text-white/60">{f.id}</div>
                 </div>
-                <div className="absolute inset-0 pointer-events-none">
-                  <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/70 to-transparent" />
+
+                {/* Actions */}
+                <div className="absolute right-2 top-2 flex gap-2">
+                  <button
+                    onClick={() => onRename(f)}
+                    className="rounded bg-white/90 px-2 py-1 text-black hover:bg-white"
+                    title="Renommer l’évènement"
+                  >
+                    Renommer
+                  </button>
+                  <button
+                    onClick={() => onDelete(f)}
+                    className="rounded bg-rose-500 px-2 py-1 text-black hover:bg-rose-400"
+                    title="Supprimer l’évènement"
+                  >
+                    Supprimer
+                  </button>
                 </div>
-                <div className="absolute bottom-0 left-0 right-0 p-4">
-                  <div className="text-sm text-white/80">{when}</div>
-                  <h2 className="text-lg font-semibold drop-shadow">{meta.title}</h2>
+
+                <div className="flex items-center justify-between gap-2 border-t border-white/10 p-3">
+                  <div className="text-sm text-white/70">{c} média{c > 1 ? "s" : ""}</div>
+                  <Link
+                    href={`/galerie?tab=all&view=folder&folderId=${encodeURIComponent(f.id)}`}
+                    className="rounded bg-white/15 px-3 py-1.5 text-white hover:bg-white/25"
+                    prefetch={false}
+                  >
+                    Ouvrir
+                  </Link>
                 </div>
-              </Link>
+              </div>
             );
           })}
         </div>
