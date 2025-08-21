@@ -1,44 +1,55 @@
-import prisma from "../../../../../lib/prisma";
-// app/api/folders/create/route.ts
+// app/api/media/folders/create/route.ts
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const revalidate = 0;
 
 import { NextResponse } from "next/server";
-// Si tu veux restreindre aux admins, dé-commente et garde le check plus bas
-// import { requireAdmin } from "../../_admin";
+import prisma from "@/lib/prisma";
+import { requireAdmin } from "../../_admin";
 
 const ok = (d: any, s = 200) =>
   NextResponse.json(d, { status: s, headers: { "Cache-Control": "no-store" } });
 
-/**
- * POST /api/folders/create
- * body: { name: string, parentId?: string | null }
- *
- * Upsert par contrainte composite @@unique([parentId, name])
- * -> évite les doublons si même nom sous le même parentId.
- */
 export async function POST(req: Request) {
-  // const deny = await requireAdmin(req); if (deny) return deny;
+  const deny = await requireAdmin(req);
+  if (deny) return deny;
 
   try {
     const body = await req.json().catch(() => ({}));
     const name = String(body?.name || "").trim();
-    const parentId =
-      body?.parentId === undefined || body?.parentId === null
-        ? null
-        : String(body.parentId);
+    // parentId peut être string ou null (racine)
+    const parentId: string | null =
+      typeof body?.parentId === "string" && body.parentId.trim()
+        ? body.parentId.trim()
+        : null;
 
-    if (!name) return ok({ error: "Paramètre `name` requis." }, 400);
+    if (!name) return ok({ error: "name requis." }, 400);
 
-    const folder = await prisma.appFolder.upsert({
-      where: { parentId_name: { parentId, name } },
-      update: {},
-      create: { name, parentId },
+    let folder;
+
+    if (parentId === null) {
+      // 🚫 Pas d'upsert composite quand parentId est NULL
+      folder = await prisma.appFolder.findFirst({
+        where: { name, parentId: null },
+      });
+      if (!folder) {
+        folder = await prisma.appFolder.create({
+          data: { name, parentId: null },
+        });
+      }
+    } else {
+      // ✅ parentId défini → on peut utiliser la clé composite @@unique([parentId, name])
+      folder = await prisma.appFolder.upsert({
+        where: { parentId_name: { parentId, name } },
+        update: {},
+        create: { name, parentId },
+      });
+    }
+
+    return ok({
+      ok: true,
+      item: { id: folder.id, name: folder.name, parentId: folder.parentId },
     });
-
-    return ok({ ok: true, item: folder });
   } catch (e: any) {
-    return ok({ error: e?.message || "Erreur création dossier (Prisma)." }, 500);
+    return ok({ error: e?.message || "Erreur création dossier." }, 500);
   }
 }
