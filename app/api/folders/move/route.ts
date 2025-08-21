@@ -1,102 +1,160 @@
-import prisma from "../../../../lib/prisma";
 // app/api/folders/move/route.ts
-import { NextResponse } from "next/server";
-import { PrismaClient, type MediaIndex as MediaIndexType } from "@prisma/client";
-import { requireAdmin } from "../../_admin";
-
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const ok = (data: any, status = 200) =>
-  NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });
+import { NextResponse } from "next/server";
+import prisma from "@/lib/prisma";
+import { requireAdmin } from "@admin"; // alias vers app/api/_admin.ts (tsconfig.json -> paths)
+
+const ok = (d: any, s = 200) =>
+  NextResponse.json(d, { status: s, headers: { "Cache-Control": "no-store" } });
 
 /**
- * Déplace des médias (public_id) d'un dossier à un autre dans la BD.
- * Body JSON:
- *   {
- *     "toFolderId": "xxx" | null,       // null => désaffecter (retirer du dossier)
- *     "fromFolderId"?: "yyy" | null,    // optionnel: ne déplacer que s'ils viennent de ce dossier
- *     "public_ids": ["a","b","c"]       // requis
- *   }
+ * Déplace une liste de médias (publicIds) d’un dossier vers un autre.
+ *
+ * Body JSON attendu :
+ * {
+ *   "publicIds": ["famille/Evenements/.../img1", "..."],
+ *   "fromFolderId": "xxx"   // optionnel : ne bouge que si ça matche la valeur actuelle
+ *   "toFolderId":   "yyy"   // requis : destination
+ * }
+ *
+ * Schéma : MediaIndex.appFolderId (et non folderId)
  */
 export async function POST(req: Request) {
-  // 🔒 Admin requis
   const deny = await requireAdmin(req);
   if (deny) return deny;
 
   try {
-    // ✅ on parse UNE seule fois
-    const body = await req.json().catch(() => null);
-    if (!body || typeof body !== "object") {
-      return ok({ error: "JSON invalide." }, 400);
+    const body = await req.json().catch(() => ({}));
+    const fromFolderId: string | undefined =
+      body.fromFolderId ?? body.from ?? undefined;
+    const toFolderId: string | null = body.toFolderId ?? body.to ?? null;
+    const list: string[] = (body.publicIds || body.public_ids || body.ids || []).filter(Boolean);
+
+    if (!Array.isArray(list) || list.length === 0) {
+      return ok({ error: "Aucun publicId fourni." }, 400);
+    }
+    if (!toFolderId) {
+      return ok({ error: "toFolderId requis." }, 400);
     }
 
-    const { toFolderId, fromFolderId, public_ids } = body as {
-      toFolderId: string | null | undefined;
-      fromFolderId?: string | null;
-      public_ids: unknown;
-    };
+    // Vérifier la destination
+    const dest = await prisma.appFolder.findUnique({ where: { id: String(toFolderId) } });
+    if (!dest) return ok({ error: `Folder destination introuvable: ${toFolderId}` }, 404);
 
-    const ids: string[] = Array.isArray(public_ids)
-      ? (public_ids as string[]).filter(Boolean)
-      : [];
+    const results = await prisma.$transaction(async (tx) => {
+      let updated = 0, created = 0, skipped = 0;
 
-    if (ids.length === 0) {
-      return ok({ error: "Aucun public_id fourni." }, 400);
-    }
-    // toFolderId peut être null (désaffecter), mais doit être fourni (même null)
-    if (typeof toFolderId === "undefined") {
-      return ok({ error: "toFolderId requis (ou null pour désaffecter)." }, 400);
-    }
-
-    const moved: MediaIndexType[] = [];
-    const updated: MediaIndexType[] = [];
-    const created: MediaIndexType[] = [];
-    const skipped: string[] = [];
-
-    await prisma.$transaction(async (tx) => {
-      for (const publicId of ids) {
+      for (const publicId of list) {
         const existing = await tx.mediaIndex.findUnique({ where: { publicId } });
 
         if (existing) {
-          // Respecte le filtre fromFolderId si fourni
-          if (
-            typeof fromFolderId === "undefined" ||
-            existing.folderId === fromFolderId
-          ) {
-            const rec = await tx.mediaIndex.update({
+          // ⚠️ utiliser appFolderId (plus folderId)
+          if (typeof fromFolderId === "undefined" || existing.appFolderId === fromFolderId) {
+            await tx.mediaIndex.update({
               where: { publicId },
-              data: { folderId: toFolderId ?? null },
+              data: { appFolderId: toFolderId },
             });
-            updated.push(rec);
-            moved.push(rec);
+            updated++;
           } else {
-            skipped.push(publicId);
+            skipped++;
           }
         } else {
-          // Pas d'entrée : on crée seulement si on assigne à un dossier (pas pour désaffecter)
-          if (toFolderId == null) {
-            skipped.push(publicId);
-            continue;
-          }
-          const rec = await tx.mediaIndex.create({
-            data: { publicId, folderId: toFolderId },
+          await tx.mediaIndex.create({
+            data: { publicId, appFolderId: toFolderId },
           });
-          created.push(rec);
-          moved.push(rec);
+          created++;
         }
       }
+
+      return { updated, created, skipped, total: list.length };
     });
 
-    return ok({
-      ok: true,
-      count: moved.length,
-      updated: updated.length,
-      created: created.length,
-      skipped,
-    });
+    return ok({ ok: true, ...results, toFolderId, fromFolderId });
   } catch (e: any) {
-    return ok({ error: e?.message || "Erreur déplacement (folders/move)." }, 400);
+    return ok({ error: e?.message || "Erreur déplacement de médias." }, 500);
   }
 }
 
+export const PATCH = POST;
+// app/api/folders/move/route.ts
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+import { NextResponse } from "next/server";
+import prisma from "@/lib/prisma";
+import { requireAdmin } from "@admin"; // alias vers app/api/_admin.ts (tsconfig.json -> paths)
+
+const ok = (d: any, s = 200) =>
+  NextResponse.json(d, { status: s, headers: { "Cache-Control": "no-store" } });
+
+/**
+ * Déplace une liste de médias (publicIds) d’un dossier vers un autre.
+ *
+ * Body JSON attendu :
+ * {
+ *   "publicIds": ["famille/Evenements/.../img1", "..."],
+ *   "fromFolderId": "xxx"   // optionnel : ne bouge que si ça matche la valeur actuelle
+ *   "toFolderId":   "yyy"   // requis : destination
+ * }
+ *
+ * Schéma : MediaIndex.appFolderId (et non folderId)
+ */
+export async function POST(req: Request) {
+  const deny = await requireAdmin(req);
+  if (deny) return deny;
+
+  try {
+    const body = await req.json().catch(() => ({}));
+    const fromFolderId: string | undefined =
+      body.fromFolderId ?? body.from ?? undefined;
+    const toFolderId: string | null = body.toFolderId ?? body.to ?? null;
+    const list: string[] = (body.publicIds || body.public_ids || body.ids || []).filter(Boolean);
+
+    if (!Array.isArray(list) || list.length === 0) {
+      return ok({ error: "Aucun publicId fourni." }, 400);
+    }
+    if (!toFolderId) {
+      return ok({ error: "toFolderId requis." }, 400);
+    }
+
+    // Vérifier la destination
+    const dest = await prisma.appFolder.findUnique({ where: { id: String(toFolderId) } });
+    if (!dest) return ok({ error: `Folder destination introuvable: ${toFolderId}` }, 404);
+
+    const results = await prisma.$transaction(async (tx) => {
+      let updated = 0, created = 0, skipped = 0;
+
+      for (const publicId of list) {
+        const existing = await tx.mediaIndex.findUnique({ where: { publicId } });
+
+        if (existing) {
+          // ⚠️ utiliser appFolderId (plus folderId)
+          if (typeof fromFolderId === "undefined" || existing.appFolderId === fromFolderId) {
+            await tx.mediaIndex.update({
+              where: { publicId },
+              data: { appFolderId: toFolderId },
+            });
+            updated++;
+          } else {
+            skipped++;
+          }
+        } else {
+          await tx.mediaIndex.create({
+            data: { publicId, appFolderId: toFolderId },
+          });
+          created++;
+        }
+      }
+
+      return { updated, created, skipped, total: list.length };
+    });
+
+    return ok({ ok: true, ...results, toFolderId, fromFolderId });
+  } catch (e: any) {
+    return ok({ error: e?.message || "Erreur déplacement de médias." }, 500);
+  }
+}
+
+export const PATCH = POST;
