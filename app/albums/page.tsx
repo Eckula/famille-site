@@ -3,10 +3,9 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 type Folder = { id: string; name: string; parentId: string | null; createdAt?: string | null };
-type CoverMap = Record<string, string | null>;
 type FoldersRes = { items?: Folder[]; folders?: Folder[] } | Folder[];
 
 async function getJSON<T>(url: string): Promise<T> {
@@ -36,27 +35,26 @@ async function delJSON<T>(url: string, body: any): Promise<T> {
 
 export default function AlbumsPage() {
   const [folders, setFolders] = useState<Folder[]>([]);
-  const [covers, setCovers] = useState<CoverMap>({});
+  const [covers, setCovers] = useState<Record<string, string | null>>({});
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [name, setName] = useState("");
 
-  // --- charge les sous-dossiers du parent "Albums"
   const refresh = useCallback(async () => {
     setLoading(true);
     setErr("");
     try {
+      // enfants de "Albums"
       let u = new URL("/api/folders", window.location.origin);
       u.searchParams.set("parentName", "Albums");
-      u.searchParams.set("ts", String(Date.now()));
-      let j = (await getJSON<FoldersRes>(u.toString())) as any;
+      const j = (await getJSON<FoldersRes>(u.toString())) as any;
 
       let list: Folder[] =
         Array.isArray(j?.items) ? j.items :
         Array.isArray(j?.folders) ? j.folders :
         Array.isArray(j) ? j : [];
 
-      // fallback si besoin : on récupère l'id du parent "Albums" puis ses enfants
+      // fallback éventuel par parent id
       if (!list.length) {
         const roots = (await getJSON<FoldersRes>("/api/folders")) as any;
         const arr =
@@ -67,18 +65,39 @@ export default function AlbumsPage() {
         if (albumsRoot?.id) {
           u = new URL("/api/folders", window.location.origin);
           u.searchParams.set("parent", albumsRoot.id);
-          j = (await getJSON<FoldersRes>(u.toString())) as any;
+          const j2 = (await getJSON<FoldersRes>(u.toString())) as any;
           list =
-            Array.isArray(j?.items) ? j.items :
-            Array.isArray(j?.folders) ? j.folders :
-            Array.isArray(j) ? j : [];
+            Array.isArray(j2?.items) ? j2.items :
+            Array.isArray(j2?.folders) ? j2.folders :
+            Array.isArray(j2) ? j2 : [];
         }
       }
 
       setFolders(list);
+
+      // charge les covers (PRIORITÉ = tag "album_cover_<id>")
+      const entries = await Promise.all(
+        list.map(async (a) => {
+          try {
+            const cov = await getJSON<{ coverUrl: string | null }>(`/api/albums/${encodeURIComponent(a.id)}/cover`);
+            if (cov?.coverUrl) return [a.id, cov.coverUrl] as const;
+
+            // fallback : 1ere photo de l’album
+            const u = new URL(`/api/albums/${encodeURIComponent(a.id)}/photos`, window.location.origin);
+            u.searchParams.set("limit", "1");
+            const j = await getJSON<any>(u.toString());
+            const first = Array.isArray(j?.items) ? j.items[0] : null;
+            return [a.id, first?.thumb || first?.url || null] as const;
+          } catch {
+            return [a.id, null] as const;
+          }
+        })
+      );
+      setCovers(Object.fromEntries(entries));
     } catch (e: any) {
       setErr(e?.message || "Erreur chargement des albums");
       setFolders([]);
+      setCovers({});
     } finally {
       setLoading(false);
     }
@@ -95,72 +114,31 @@ export default function AlbumsPage() {
     });
   }, [folders]);
 
-  // --- récupérer la cover (première photo de l'album)
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const entries = await Promise.all(
-        albums.map(async (f) => {
-          try {
-            const u = new URL(`/api/albums/${encodeURIComponent(f.id)}/photos`, window.location.origin);
-            u.searchParams.set("limit", "1");
-            const j: any = await getJSON(u.toString());
-            const first = Array.isArray(j?.items) ? j.items[0] : null;
-            return [f.id, first?.thumb || first?.url || null] as const;
-          } catch {
-            return [f.id, null] as const;
-          }
-        })
-      );
-      if (!cancelled) setCovers(Object.fromEntries(entries));
-    })();
-    return () => { cancelled = true; };
-  }, [albums]);
-
-  // --- créer (BD uniquement, sous "Albums")
   async function onCreate() {
     const val = name.trim();
     if (!val) return;
     try {
-      // 1er essai : POST /api/folders { name, parentName: "Albums" }
-      try {
-        await postJSON("/api/folders", { name: val, parentName: "Albums" });
-      } catch {
-        // Repli : /api/folders/create (hérité)
-        await postJSON("/api/folders/create", { name: val, parentName: "Albums" });
-      }
+      await postJSON("/api/folders", { name: val, parentName: "Albums" });
       setName("");
       await refresh();
     } catch (e: any) {
       alert(e?.message || "Création impossible");
     }
   }
-
-  // --- renommer (BD uniquement)
   async function onRename(f: Folder) {
     const newName = prompt("Nouveau nom de l’album :", f.name)?.trim();
     if (!newName || newName === f.name) return;
     try {
-      try {
-        await patchJSON("/api/folders", { id: f.id, name: newName });
-      } catch {
-        await postJSON("/api/folders/rename", { id: f.id, name: newName });
-      }
+      await patchJSON("/api/folders", { id: f.id, name: newName });
       await refresh();
     } catch (e: any) {
       alert(e?.message || "Renommage impossible");
     }
   }
-
-  // --- supprimer (BD uniquement — les média/dossiers galerie restent)
   async function onDelete(f: Folder) {
     if (!confirm(`Supprimer l’album « ${f.name} » ? (les dossiers & médias restent en galerie)`)) return;
     try {
-      try {
-        await delJSON("/api/folders", { id: f.id });
-      } catch {
-        await postJSON("/api/folders/delete", { id: f.id });
-      }
+      await delJSON("/api/folders", { id: f.id });
       await refresh();
     } catch (e: any) {
       alert(e?.message || "Suppression impossible");
@@ -170,9 +148,8 @@ export default function AlbumsPage() {
   return (
     <main className="px-6 py-24 text-white">
       <h1 className="mb-2 text-3xl font-bold">Albums</h1>
-      <p className="text-white/80 mb-4">Regroupements de dossiers de la galerie (BD uniquement).</p>
+      <p className="text-white/80 mb-4">Un album est un regroupement de dossiers de la galerie (aucun dossier Cloudinary n’est créé).</p>
 
-      {/* Formulaire créer */}
       <div className="mb-6 flex gap-2 max-w-lg">
         <input
           value={name}
@@ -196,11 +173,7 @@ export default function AlbumsPage() {
             const cover = covers[a.id];
             const href = `/album/${encodeURIComponent(a.id)}`;
             return (
-              <article
-                key={a.id}
-                className="relative overflow-hidden rounded-2xl border border-white/25 bg-white/5 shadow-sm"
-              >
-                {/* COVER cliquable (uniquement la zone image) */}
+              <article key={a.id} className="relative overflow-hidden rounded-2xl border border-white/25 bg-white/5 shadow-sm">
                 <div className="relative aspect-video w-full overflow-hidden bg-black/30">
                   {cover ? (
                     <Image
@@ -217,25 +190,16 @@ export default function AlbumsPage() {
                   <Link href={href} prefetch={false} aria-label={`Ouvrir ${a.name}`} className="absolute inset-0" />
                 </div>
 
-                {/* dégradés visuels */}
-                <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-black/40 to-transparent" />
-                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/70 to-transparent" />
-
-                {/* Barre infos + actions */}
                 <div className="relative z-10 flex items-center justify-between gap-2 px-3 py-2 text-sm border-t border-white/10">
                   <div className="min-w-0">
-                    {a.createdAt && (
-                      <div className="text-xs text-white/70">{new Date(a.createdAt).toLocaleDateString("fr-FR")}</div>
-                    )}
+                    {a.createdAt && <div className="text-xs text-white/70">{new Date(a.createdAt).toLocaleDateString("fr-FR")}</div>}
                     <div className="truncate font-semibold">{a.name}</div>
                   </div>
                   <div className="ml-auto flex items-center gap-2">
-                    <button onClick={() => onRename(a)}
-                            className="rounded px-2 py-1 border border-white/20 hover:bg-white/10">
+                    <button onClick={() => onRename(a)} className="rounded px-2 py-1 border border-white/20 hover:bg-white/10">
                       Renommer
                     </button>
-                    <button onClick={() => onDelete(a)}
-                            className="rounded px-2 py-1 border border-red-400/40 text-red-300 hover:bg-red-500/10">
+                    <button onClick={() => onDelete(a)} className="rounded px-2 py-1 border border-red-400/40 text-red-300 hover:bg-red-500/10">
                       Supprimer
                     </button>
                   </div>

@@ -43,65 +43,57 @@ function mapItem(r: any) {
   };
 }
 
-function ok(data: any, status = 200) {
-  return NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });
-}
+const ok = (d: any, s = 200) =>
+  NextResponse.json(d, { status: s, headers: { "Cache-Control": "no-store" } });
 
-function bad(msg: string, status = 500) {
-  return ok({ error: msg }, status);
-}
+const bad = (m: string, s = 500) => ok({ error: m }, s);
 
 /**
- * GET /api/albums/[albumId]/photos?limit=1
- * - Récupère les dossiers membres de l’album
- * - Résout les publicId dans MediaIndex (via appFolderId)
- * - Lookup Cloudinary par lots (images -> vidéos -> raw)
- * - Tri desc par createdAt et coupe à `limit`
+ * GET /api/albums/[albumId]/photos?limit=120
+ * - Dossiers membres (AlbumFolderLink)
+ * - Public IDs via MediaIndex.appFolderId IN (...)
+ * - Lookup Cloudinary par lots: image → video → raw
+ * - Tri desc par created_at et coupe à `limit`
  */
 export async function GET(
   req: Request,
-  ctx: { params: Promise<{ albumId: string }> } // ⚠️ Next 15: params est une Promise
+  ctx: { params: Promise<{ albumId: string }> }
 ) {
   try {
-    const { albumId } = await ctx.params; // ⚠️ attendre params
-    const sp = new URL(req.url).searchParams;
-    const limit = Math.max(1, Math.min(100, Number(sp.get("limit") || "30")));
+    const { albumId } = await ctx.params;
+    const limit = Math.max(1, Math.min(500, Number(new URL(req.url).searchParams.get("limit") || "120")));
 
-    // 1) dossiers membres de l’album
+    // 1) dossiers membres
     const links = await prisma.albumFolderLink.findMany({
       where: { albumId },
-      select: { folderId: true }, // <-- NORMAL ici : modèle AlbumFolderLink
-      // (pas d’ordre requis ici)
+      select: { folderId: true },
     });
     const folderIds = links.map((l) => l.folderId);
-    if (folderIds.length === 0) return ok({ items: [] });
+    if (!folderIds.length) return ok({ items: [] });
 
-    // 2) on récupère les publicId dans MediaIndex via appFolderId (côté Prisma)
-    //    (si ton modèle Prisma est resté avec "folderId" au lieu de "appFolderId",
-    //     remplace la ligne "appFolderId" par "folderId" ci-dessous.)
-    const mediaRows = await prisma.mediaIndex.findMany({
-      where: { appFolderId: { in: folderIds } },
+    // 2) public IDs par appFolderId
+    const rows = await prisma.mediaIndex.findMany({
+      where: { appFolderId: { in: folderIds } }, // ⚠️ champ mappé sur column folderId
       select: { publicId: true, createdAt: true },
       orderBy: { createdAt: "desc" },
-      take: limit * 3, // on prend large, on filtrera après Cloudinary
+      take: limit * 3,
     });
+    const ids = Array.from(new Set(rows.map((r) => r.publicId)));
+    if (!ids.length) return ok({ items: [] });
 
-    const ids = Array.from(new Set(mediaRows.map((r) => r.publicId)));
-    if (ids.length === 0) return ok({ items: [] });
-
-    // 3) Cloudinary lookup par lots (images -> vidéos -> raw)
+    // 3) Cloudinary lookup
     ensureCloudinary();
     const left = new Set(ids);
     const found: any[] = [];
 
     async function byIds(rt: "image" | "video" | "raw") {
-      const chunk = 100;
       const arr = Array.from(left);
+      const chunk = 100;
       for (let i = 0; i < arr.length; i += chunk) {
-        const idsChunk = arr.slice(i, i + chunk);
-        if (!idsChunk.length) break;
+        const slice = arr.slice(i, i + chunk);
+        if (!slice.length) break;
         try {
-          const res = await cloudinary.api.resources_by_ids(idsChunk, {
+          const res = await cloudinary.api.resources_by_ids(slice, {
             resource_type: rt,
             type: "upload",
           } as any);
@@ -113,10 +105,10 @@ export async function GET(
           for (const r of list) {
             found.push(r);
             left.delete(r.public_id);
+            if (found.length >= limit) break;
           }
           if (found.length >= limit) break;
         } catch (e: any) {
-          // en cas de rate limit, on sort de ce round
           const msg = e?.error?.message || e?.message || String(e);
           if (/rate\s*limit/i.test(msg)) break;
         }
@@ -127,12 +119,8 @@ export async function GET(
     if (left.size && found.length < limit) await byIds("video");
     if (left.size && found.length < limit) await byIds("raw");
 
-    // 4) tri par date + coupe à limit
     const items = found
-      .sort(
-        (a, b) =>
-          +new Date(b?.created_at as string) - +new Date(a?.created_at as string)
-      )
+      .sort((a, b) => +new Date(b?.created_at) - +new Date(a?.created_at))
       .slice(0, limit)
       .map(mapItem);
 

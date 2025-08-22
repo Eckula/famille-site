@@ -1,22 +1,16 @@
 // app/album/[albumId]/page.tsx
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import Image from "next/image";
-import { useParams } from "next/navigation";
+import Link from "next/link";
+import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-type Folder = {
-  id: string;
-  name: string;
-  parentId: string | null;
-  createdAt: string;
-};
-type Member = { folderId: string; createdAt?: string };
-type Photo = {
+type Role = "guest" | "viewer" | "editor" | "admin";
+type Album = { id: string; name: string; parentId: string | null; createdAt?: string | null };
+type Folder = { id: string; name: string; parentId?: string | null; createdAt?: string | null };
+type Media = {
   public_id: string;
-  title?: string;
-  url: string;
+  url?: string;
   thumb?: string;
   kind?: "image" | "video" | "audio" | "document";
   createdAt?: string;
@@ -24,317 +18,321 @@ type Photo = {
 
 async function getJSON<T>(url: string): Promise<T> {
   const r = await fetch(url, { cache: "no-store" });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
+  const txt = await r.text();
+  if (!r.ok) throw new Error(txt || `HTTP ${r.status}`);
+  return txt ? JSON.parse(txt) : ({} as any);
+}
+async function postJSON<T>(url: string, body: any): Promise<T> {
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || (j as any)?.error) throw new Error((j as any)?.error || `HTTP ${r.status}`);
+  return j;
+}
+async function delJSON<T>(url: string, body?: any): Promise<T> {
+  const r = await fetch(url, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || (j as any)?.error) throw new Error((j as any)?.error || `HTTP ${r.status}`);
+  return j;
 }
 
-export default function AlbumPage() {
-  // ✅ Next 15 client side: read dynamic segment with useParams()
-  const { albumId } = useParams<{ albumId: string }>() ?? { albumId: "" };
+export default function AlbumPage(props: { params: Promise<{ albumId: string }> }) {
+  const { albumId } = use(props.params);
 
-  const [album, setAlbum] = useState<Folder | null>(null);
-  const [members, setMembers] = useState<Folder[]>([]);
-  const [photos, setPhotos] = useState<Photo[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [role, setRole] = useState<Role>("guest");
+  const [album, setAlbum] = useState<Album | null>(null);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [photos, setPhotos] = useState<Media[]>([]);
+  const [limit, setLimit] = useState<number>(120);
+  const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-  // ---- Folder Picker (modal) ----
+  // drawer add-folder
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerLoading, setPickerLoading] = useState(false);
-  const [pickerErr, setPickerErr] = useState("");
   const [allFolders, setAllFolders] = useState<Folder[]>([]);
-  const [search, setSearch] = useState("");
+  const [q, setQ] = useState("");
+  const drawerRef = useRef<HTMLDivElement | null>(null);
 
-  const filteredFolders = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    let list = allFolders;
-    if (q) list = list.filter((f) => f.name.toLowerCase().includes(q));
-    // évite de proposer les dossiers système
-    return list.filter(
-      (f) =>
-        !["Albums", "Événements", "Evenements", "Documents"].includes(
-          f.name.trim()
-        )
-    );
-  }, [allFolders, search]);
+  // cover
+  const [coverPublicId, setCoverPublicId] = useState<string | null>(null);
 
-  const loadAlbum = useCallback(async () => {
-    if (!albumId) return;
+  const isAdmin = role === "admin";
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const j: any = await getJSON("/api/me");
+        if (!cancelled) setRole((j?.role as Role) || "guest");
+      } catch {
+        if (!cancelled) setRole("guest");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const refresh = useCallback(async () => {
     setLoading(true);
-    setErr("");
     try {
-      // 1) métadonnées de l'album
-      const a = await getJSON<{ item: Folder | null }>(
-        `/api/folders?id=${encodeURIComponent(albumId)}`
-      );
-      setAlbum(a.item ?? null);
+      setErr("");
 
-      // 2) membres
-      const m = await getJSON<{ items: Folder[] }>(
+      const m = await getJSON<{ album: Album; folders: Folder[] }>(
         `/api/albums/${encodeURIComponent(albumId)}/members`
       );
-      setMembers(Array.isArray(m.items) ? m.items : []);
+      setAlbum(m?.album ?? null);
+      setFolders(Array.isArray(m?.folders) ? m.folders : []);
 
-      // 3) photos (une petite sélection pour la page)
-      const p = await getJSON<{ items: Photo[] }>(
-        `/api/albums/${encodeURIComponent(albumId)}/photos?limit=60`
+      const ph = await getJSON<{ items: Media[] }>(
+        `/api/albums/${encodeURIComponent(albumId)}/photos?limit=${limit}`
       );
-      setPhotos(Array.isArray(p.items) ? p.items : []);
+      setPhotos(Array.isArray(ph?.items) ? ph.items : []);
+
+      // cover actuelle
+      try {
+        const c = await getJSON<{ publicId: string | null }>(`/api/albums/${encodeURIComponent(albumId)}/cover`);
+        setCoverPublicId(c?.publicId ?? null);
+      } catch { setCoverPublicId(null); }
+
     } catch (e: any) {
-      setErr(e?.message || "Erreur chargement album");
+      setErr(e?.message || "Erreur chargement");
+      setAlbum(null);
+      setFolders([]);
+      setPhotos([]);
+      setCoverPublicId(null);
     } finally {
       setLoading(false);
     }
-  }, [albumId]);
+  }, [albumId, limit]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  // picker data
+  const refreshPickerList = useCallback(async () => {
+    try {
+      const recent = await getJSON<{ items: Folder[] }>("/api/folders?recent=300");
+      const roots = await getJSON<{ folders?: Folder[]; items?: Folder[] }>("/api/folders?root=gallery");
+      const list: Folder[] = [
+        ...(Array.isArray(recent?.items) ? recent.items : []),
+        ...(Array.isArray((roots as any)?.folders) ? (roots as any).folders : []),
+        ...(Array.isArray((roots as any)?.items) ? (roots as any).items : []),
+      ];
+      const map = new Map<string, Folder>();
+      for (const f of list) map.set(f.id, f);
+      setAllFolders(Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, "fr")));
+    } catch {}
+  }, []);
+
+  const openPicker = async () => { await refreshPickerList(); setPickerOpen(true); };
+  const closePicker = () => setPickerOpen(false);
 
   useEffect(() => {
-    loadAlbum();
-  }, [loadAlbum]);
+    if (!pickerOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") closePicker(); };
+    const onClick = (e: MouseEvent) => {
+      if (!drawerRef.current) return;
+      if (!drawerRef.current.contains(e.target as Node)) closePicker();
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onClick);
+    return () => { document.removeEventListener("keydown", onKey); document.removeEventListener("mousedown", onClick); };
+  }, [pickerOpen]);
 
-  // ---- Picker helpers ----
-  const openPicker = async () => {
-    setPickerOpen(true);
-    if (allFolders.length) return; // déjà chargé
-    setPickerLoading(true);
-    setPickerErr("");
+  async function onAddFolder(folderId: string) {
     try {
-      // Liste 300 derniers dossiers (suffisant et rapide)
-      const j = await getJSON<{ items: Folder[] }>(`/api/folders?recent=300`);
-      setAllFolders(Array.isArray(j.items) ? j.items : []);
+      await postJSON(`/api/albums/${encodeURIComponent(albumId)}/members`, { folderId });
+      await refresh();
     } catch (e: any) {
-      setPickerErr(e?.message || "Impossible de charger les dossiers.");
-    } finally {
-      setPickerLoading(false);
+      alert(e?.message || "Ajout impossible");
     }
-  };
+  }
+  async function onRemoveFolder(fid: string) {
+    if (!confirm("Retirer ce dossier de l’album ? (les médias restent en galerie)")) return;
+    try {
+      await delJSON(`/api/albums/${encodeURIComponent(albumId)}/members`, { folderId: fid });
+      await refresh();
+    } catch (e: any) {
+      alert(e?.message || "Suppression impossible");
+    }
+  }
 
-  const addFolderToAlbum = async (folderId: string) => {
+  // cover actions
+  async function setAsCover(publicId: string) {
     try {
-      const r = await fetch(`/api/albums/${albumId}/members`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folderId }),
-      });
-      const j = await r.json();
-      if (!r.ok || j?.error) throw new Error(j?.error || `HTTP ${r.status}`);
-      setPickerOpen(false);
-      await loadAlbum();
+      await postJSON(`/api/albums/${encodeURIComponent(albumId)}/cover`, { publicId });
+      setCoverPublicId(publicId);
     } catch (e: any) {
-      alert(e?.message || "Ajout impossible.");
+      alert(e?.message || "Impossible de définir la couverture");
     }
-  };
-
-  const removeFolderFromAlbum = async (folderId: string) => {
-    if (!confirm("Retirer ce dossier de l’album ?")) return;
+  }
+  async function clearCover() {
     try {
-      const r = await fetch(
-        `/api/albums/${albumId}/members?folderId=${encodeURIComponent(folderId)}`,
-        { method: "DELETE" }
-      );
-      const j = await r.json();
-      if (!r.ok || j?.error) throw new Error(j?.error || `HTTP ${r.status}`);
-      await loadAlbum();
+      await delJSON(`/api/albums/${encodeURIComponent(albumId)}/cover`);
+      setCoverPublicId(null);
     } catch (e: any) {
-      alert(e?.message || "Suppression impossible.");
+      alert(e?.message || "Impossible de retirer la couverture");
     }
-  };
+  }
 
   const title = album?.name || "Album";
+  const sortedFolders = useMemo(() => [...folders].sort((a, b) => a.name.localeCompare(b.name, "fr")), [folders]);
+
+  const filteredPicker = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    const current = new Set(folders.map((f) => f.id));
+    return allFolders
+      .filter((f) => !current.has(f.id))
+      .filter((f) => !s || f.name.toLowerCase().includes(s));
+  }, [q, allFolders, folders]);
 
   return (
-    <main className="px-6 py-20 text-white">
-      {/* Header */}
-      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <Link
-            href="/albums"
-            prefetch={false}
-            className="inline-flex items-center gap-2 text-white/80 hover:text-white"
-          >
-            ← Retour aux albums
-          </Link>
-          <h1 className="mt-2 text-3xl font-bold">{title}</h1>
-          <p className="text-white/70">
-            {members.length} dossier{members.length > 1 ? "s" : ""} •{" "}
-            {photos.length} média{photos.length > 1 ? "s" : ""}
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={openPicker}
-            className="rounded bg-emerald-400 px-3 py-2 text-black hover:bg-emerald-300"
-          >
-            + Ajouter un dossier
+    <main className="px-4 py-20 text-white">
+      <div className="mb-4 flex items-center gap-3">
+        <Link href="/albums" className="text-white/80 hover:underline">← Retour aux albums</Link>
+        {coverPublicId && (
+          <button onClick={clearCover} className="rounded bg-white/10 px-3 py-1 text-sm hover:bg-white/20">
+            Retirer la couverture
           </button>
-          <Link
-            prefetch={false}
-            href={`/galerie?tab=all&view=folder&folderId=${encodeURIComponent(
-              albumId || ""
-            )}`}
-            className="rounded border border-white/30 px-3 py-2 hover:bg-white/10"
-          >
-            Voir dans la galerie
-          </Link>
-        </div>
+        )}
       </div>
 
-      {/* Erreurs / états */}
+      <header className="mb-6 flex items-center gap-3">
+        <h1 className="text-2xl font-semibold">{title}</h1>
+        <button onClick={openPicker} className="rounded bg-emerald-400 px-3 py-1.5 text-sm text-black hover:bg-emerald-300">
+          Ajouter un dossier de la galerie
+        </button>
+      </header>
+
       {err && <p className="mb-3 text-red-300">⚠️ {err}</p>}
-      {loading && <p className="text-white/70">Chargement…</p>}
+      {loading && <p className="mb-6 text-white/70">Chargement…</p>}
 
-      {/* Photos */}
-      <section className="mb-10">
-        <h2 className="mb-3 text-xl font-semibold">Photos</h2>
-        {photos.length === 0 ? (
-          <div className="rounded-lg border border-white/20 p-6 text-white/70">
-            Pas de média.
-          </div>
+      <section className="mb-8">
+        <h2 className="mb-2 text-lg font-semibold">Dossiers de cet album</h2>
+        {!sortedFolders.length ? (
+          <p className="text-white/70">Aucun dossier.</p>
         ) : (
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-            {photos.map((p) => (
-              <div
-                key={p.public_id}
-                className="group relative overflow-hidden rounded-lg bg-white/5"
-                title={p.title || p.public_id}
-              >
-                {p.thumb ? (
-                  <Image
-                    src={p.thumb}
-                    alt={p.title || p.public_id}
-                    width={600}
-                    height={400}
-                    className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                    unoptimized
-                  />
-                ) : (
-                  <div className="grid h-32 place-items-center text-white/60">
-                    {p.title || p.public_id}
-                  </div>
-                )}
-              </div>
+          <ul className="flex flex-wrap gap-2">
+            {sortedFolders.map((f) => (
+              <li key={f.id} className="flex items-center gap-2 rounded-full border border-white/20 bg-white/5 px-3 py-1 text-sm">
+                <span className="truncate max-w-[30ch]">{f.name}</span>
+                <Link
+                  prefetch={false}
+                  href={`/galerie?tab=all&view=folder&folderId=${encodeURIComponent(f.id)}`}
+                  className="rounded-full border border-white/20 px-2 py-0.5 hover:bg-white/10"
+                >
+                  Ouvrir
+                </Link>
+                <button
+                  onClick={() => onRemoveFolder(f.id)}
+                  className="rounded-full border border-red-400/40 px-2 py-0.5 text-red-300 hover:bg-red-500/10"
+                >
+                  Retirer
+                </button>
+              </li>
             ))}
-          </div>
+          </ul>
         )}
       </section>
 
-      {/* Dossiers membres */}
+      <div className="mb-3 flex items-center gap-3">
+        <button onClick={() => refresh()} className="rounded border border-white/20 px-3 py-1.5 text-sm hover:bg-white/10">
+          Rafraîchir
+        </button>
+        <label className="text-sm text-white/80">
+          Limite photos&nbsp;
+          <select value={limit} onChange={(e) => setLimit(Number(e.target.value))}
+                  className="rounded bg-black/30 border border-white/20 px-2 py-1">
+            <option value={60}>60</option>
+            <option value={120}>120</option>
+            <option value={240}>240</option>
+            <option value={500}>500</option>
+          </select>
+        </label>
+      </div>
+
+      {/* Mur de médias (cliquables + bouton couverture) */}
       <section>
-        <h2 className="mb-3 text-xl font-semibold">Dossiers dans l’album</h2>
-        {members.length === 0 ? (
-          <div className="rounded-lg border border-white/20 p-6 text-white/70">
-            Aucun dossier membre.
-          </div>
+        {!photos.length ? (
+          <p className="text-white/70">Pas de média.</p>
         ) : (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {members.map((f) => (
-              <div
-                key={f.id}
-                className="flex items-center justify-between rounded-lg border border-white/20 bg-white/5 p-3"
-              >
-                <div className="min-w-0 pr-3">
-                  <div className="truncate font-medium">{f.name}</div>
-                  <div className="text-xs text-white/60">
-                    {new Date(f.createdAt).toLocaleDateString("fr-FR")}
+          <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+            {photos.map((m) => {
+              const src = m.thumb || m.url || "";
+              const isCover = coverPublicId && m.public_id === coverPublicId;
+              return (
+                <figure key={m.public_id} className="relative aspect-[4/3] overflow-hidden rounded-lg border border-white/10 bg-black/30">
+                  {src ? (
+                    <Image src={src} alt={m.public_id} width={800} height={600} className="h-full w-full object-cover" unoptimized />
+                  ) : (
+                    <div className="grid h-full w-full place-items-center text-white/70">📄</div>
+                  )}
+
+                  {/* ruban "Couverture" */}
+                  {isCover && (
+                    <span className="absolute left-2 top-2 rounded bg-emerald-500 px-2 py-0.5 text-xs font-semibold text-black">
+                      Couverture
+                    </span>
+                  )}
+
+                  {/* actions */}
+                  <div className="absolute inset-x-0 bottom-0 flex items-center gap-2 p-2
+                                  bg-gradient-to-t from-black/60 via-black/30 to-transparent">
+                    <a href={m.url || src} target="_blank" rel="noopener noreferrer"
+                       className="rounded bg-white/10 px-2 py-1 text-xs hover:bg-white/20">Ouvrir</a>
+
+                    {!isCover ? (
+                      <button onClick={() => setAsCover(m.public_id)}
+                              className="rounded bg-emerald-400 px-2 py-1 text-xs text-black hover:bg-emerald-300">
+                        Définir comme couverture
+                      </button>
+                    ) : (
+                      <button onClick={clearCover}
+                              className="rounded bg-white/10 px-2 py-1 text-xs hover:bg-white/20">
+                        Retirer la couverture
+                      </button>
+                    )}
                   </div>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <Link
-                    href={`/galerie?tab=all&view=folder&folderId=${encodeURIComponent(
-                      f.id
-                    )}`}
-                    prefetch={false}
-                    className="rounded border border-white/30 px-2 py-1 text-sm hover:bg-white/10"
-                  >
-                    Ouvrir
-                  </Link>
-                  <button
-                    onClick={() => removeFolderFromAlbum(f.id)}
-                    className="rounded border border-red-300/60 px-2 py-1 text-sm text-red-200 hover:bg-red-400/10"
-                  >
-                    Retirer
-                  </button>
-                </div>
-              </div>
-            ))}
+                </figure>
+              );
+            })}
           </div>
         )}
       </section>
 
-      {/* Modal: sélecteur de dossier */}
+      {/* Drawer d’ajout de dossier */}
       {pickerOpen && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4">
-          <div className="w-full max-w-2xl rounded-2xl border border-white/20 bg-neutral-900 p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-lg font-semibold">Ajouter un dossier</h3>
-              <button
-                onClick={() => setPickerOpen(false)}
-                className="rounded px-2 py-1 text-white/70 hover:bg-white/10"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="mb-3 flex items-center gap-2">
-              <input
-                placeholder="Rechercher…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full rounded border border-white/25 bg-black/30 px-3 py-2"
-              />
-              <button
-                onClick={() => {
-                  setAllFolders([]);
-                  setSearch("");
-                  openPicker();
-                }}
-                className="rounded border border-white/30 px-3 py-2 hover:bg-white/10"
-                title="Rafraîchir"
-              >
-                ↻
-              </button>
-            </div>
-
-            {pickerErr && (
-              <p className="mb-3 text-sm text-red-300">⚠️ {pickerErr}</p>
-            )}
-            {pickerLoading ? (
-              <div className="p-6 text-white/70">Chargement…</div>
-            ) : filteredFolders.length === 0 ? (
-              <div className="p-6 text-white/70">Aucun dossier.</div>
-            ) : (
-              <div className="max-h-[50vh] overflow-auto rounded border border-white/10">
-                <ul className="divide-y divide-white/10">
-                  {filteredFolders.map((f) => (
-                    <li
-                      key={f.id}
-                      className="flex items-center justify-between p-3 hover:bg-white/5"
-                    >
-                      <div className="min-w-0 pr-3">
-                        <div className="truncate">{f.name}</div>
-                        <div className="text-xs text-white/50">
-                          {new Date(f.createdAt).toLocaleDateString("fr-FR")}
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => addFolderToAlbum(f.id)}
-                        className="shrink-0 rounded bg-emerald-400 px-3 py-1 text-sm text-black hover:bg-emerald-300"
-                      >
-                        Ajouter
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+        <div className="fixed inset-0 z-[60]">
+          <div className="absolute inset-0 bg-black/60" />
+          <div ref={drawerRef} className="absolute right-0 top-0 h-full w-[92vw] max-w-[560px] bg-neutral-900 shadow-xl border-l border-white/10 flex flex-col">
+            <div className="flex items-center gap-2 border-b border-white/10 px-3 py-3">
+              <div className="font-semibold">Ajouter un dossier de la galerie</div>
+              <div className="ml-auto flex items-center gap-2">
+                <button onClick={refreshPickerList} className="rounded border border-white/20 px-2 py-1 text-sm hover:bg-white/10">
+                  Rafraîchir
+                </button>
+                <button onClick={closePicker} className="rounded bg-white/90 px-2 py-1 text-sm text-black hover:bg-white">
+                  Fermer
+                </button>
               </div>
-            )}
+            </div>
 
-            <div className="mt-3 flex justify-end">
-              <button
-                onClick={() => setPickerOpen(false)}
-                className="rounded border border-white/30 px-3 py-2 hover:bg-white/10"
-              >
-                Fermer
-              </button>
+            <div className="p-3">
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher un dossier (ex: Papa/2025 …)"
+                     className="w-full rounded border border-white/20 bg-black/40 px-3 py-2 text-white"/>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-2">
+              {!filteredPicker.length ? (
+                <div className="rounded border border-white/10 bg-white/5 p-3 text-white/70">Aucun dossier correspondant.</div>
+              ) : (
+                filteredPicker.map((f) => (
+                  <div key={f.id} className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                    <div className="truncate">{f.name}</div>
+                    <button onClick={() => onAddFolder(f.id)}
+                            className="rounded bg-emerald-400 px-2 py-1 text-sm text-black hover:bg-emerald-300">
+                      Ajouter
+                    </button>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>

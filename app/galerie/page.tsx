@@ -80,6 +80,7 @@ function folderOf(it: Item) {
     ? it.folder.replace(/\/+$/, "")
     : it.public_id.split("/").slice(0, -1).join("/").replace(/\/+$/, ""))!;
 }
+const normFolder = (s: string) => s.trim().replace(/^\/+|\/+$/g, "").replace(/\/{2,}/g, "/");
 
 /* ---------- Page ---------- */
 
@@ -124,6 +125,27 @@ export default function GaleriePage() {
   const [busyMove, setBusyMove] = useState(false);
   const [busyAssign, setBusyAssign] = useState(false);
 
+  // Détection device tactile (pour appui long)
+  const [isTouchDevice, setIsTouchDevice] = useState(false);
+  useEffect(() => {
+    try {
+      setIsTouchDevice(
+        typeof window !== "undefined" &&
+          ("ontouchstart" in window || (navigator as any).maxTouchPoints > 0)
+      );
+    } catch {
+      setIsTouchDevice(false);
+    }
+  }, []);
+
+  // Refs utilitaires pour l’appui long (partagés)
+  const lpTimer = useRef<number | null>(null);
+  const lpFired = useRef(false);
+  const lpStartXY = useRef<{ x: number; y: number } | null>(null);
+  const ignoreClicksUntil = useRef(0);
+  const LP_THRESHOLD_MS = 450;
+  const LP_CANCEL_DIST = 10;
+
   /* ---------- Chargements ---------- */
 
   const fetchList = useCallback(async () => {
@@ -138,6 +160,8 @@ export default function GaleriePage() {
       if (v) qs.set("view", v);
       if (folderId) qs.set("folderId", folderId);
       if (currentTab) qs.set("tab", currentTab);
+      qs.set("perPage", "500");
+      qs.set("ts", Date.now().toString());
 
       const r = await fetch(`/api/media/list?${qs.toString()}`, { cache: "no-store" });
       if (!r.ok) {
@@ -192,7 +216,7 @@ export default function GaleriePage() {
   const fetchFolders = useCallback(async () => {
     try {
       const r = await fetch("/api/folders", { cache: "no-store" });
-      const j = await r.json();
+    const j = await r.json();
       if (r.ok && Array.isArray(j?.items)) setFolders(j.items);
       else setFolders([]);
     } catch {
@@ -261,12 +285,39 @@ export default function GaleriePage() {
 
   async function doMoveCloudinary() {
     if (selectedPublicIds.size === 0) return;
-    const target = moveFolder.trim().replace(/\/+$/, "");
+
+    const targetRaw = moveFolder.trim().replace(/\/+$/, "");
+    const target = normFolder(targetRaw);
     if (!target) { alert("Renseigne un dossier Cloudinary cible (ex: famille/Photos/2025)"); return; }
+
+    const selectedItems = items.filter(i => selectedPublicIds.has(i.public_id));
+    if (!selectedItems.length) return;
+
+    const sameAsTarget = selectedItems.filter(it => normFolder(folderOf(it)) === target);
+    if (sameAsTarget.length === selectedItems.length) {
+      alert(`Les ${selectedItems.length} élément(s) sélectionné(s) sont déjà dans « ${target} ».\nAucun déplacement effectué.`);
+      return;
+    }
+    if (sameAsTarget.length > 0) {
+      const proceed = confirm(
+        `${sameAsTarget.length} élément(s) sont déjà dans « ${target} » et seront ignorés.\n` +
+        `Continuer pour déplacer les ${selectedItems.length - sameAsTarget.length} autre(s) ?`
+      );
+      if (!proceed) return;
+    }
+
+    const toMove = selectedItems
+      .filter(it => normFolder(folderOf(it)) !== target)
+      .map(it => it.public_id);
+
+    if (toMove.length === 0) {
+      alert("Rien à déplacer.");
+      return;
+    }
 
     setBusyMove(true);
     try {
-      const payload = { publicIds: Array.from(selectedPublicIds), toFolder: target };
+      const payload = { publicIds: toMove, toFolder: target };
       const res = await fetch("/api/media/move", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
       });
@@ -275,7 +326,7 @@ export default function GaleriePage() {
 
       clearSel();
       await fetchList();
-      // (le mapping n'est pas impacté par un simple move physique)
+      alert(`Déplacement terminé : ${toMove.length} élément(s).`);
     } catch (e: any) {
       alert(e?.message || "Erreur déplacement Cloudinary.");
     } finally {
@@ -299,10 +350,12 @@ export default function GaleriePage() {
       clearSel();
       await fetchFolders();
       await fetchAssignedMap();
-      await fetchList();
 
-      if (confirm(`Affectés (${j.count}). Ouvrir le dossier ?`)) {
-        router.push(`/evenements/view?folderId=${assignFolderId}`);
+      const go = `/galerie?view=folder&folderId=${encodeURIComponent(assignFolderId)}&tab=all&perPage=500&ts=${Date.now()}`;
+      if (confirm(`Affectés (${j.count}). Ouvrir le dossier dans la Galerie ?`)) {
+        router.push(go);
+      } else {
+        await fetchList();
       }
     } catch (e: any) {
       alert(e?.message || "Erreur d'affectation.");
@@ -388,6 +441,38 @@ export default function GaleriePage() {
     if (Math.abs(dx) < 40) return;
     if (dx > 0) setLbIndex((i) => (i - 1 + viewable.length) % viewable.length);
     else       setLbIndex((i) => (i + 1) % viewable.length);
+  };
+
+  /* ---------- Handlers d’appui long (mobile) ---------- */
+  const handleTouchStartItem = (publicId: string) => (e: React.TouchEvent) => {
+    if (!isTouchDevice) return;
+    lpFired.current = false;
+    const t = e.touches[0];
+    lpStartXY.current = { x: t.clientX, y: t.clientY };
+    if (lpTimer.current) clearTimeout(lpTimer.current);
+    lpTimer.current = window.setTimeout(() => {
+      lpFired.current = true;
+      ignoreClicksUntil.current = Date.now() + 800;
+      toggleSel(publicId);
+      try { (navigator as any)?.vibrate?.(10); } catch {}
+    }, LP_THRESHOLD_MS);
+  };
+  const handleTouchMoveItem = () => (e: React.TouchEvent) => {
+    if (!isTouchDevice || !lpStartXY.current) return;
+    const t = e.touches[0];
+    const dx = Math.abs(t.clientX - lpStartXY.current.x);
+    const dy = Math.abs(t.clientY - lpStartXY.current.y);
+    if (dx > LP_CANCEL_DIST || dy > LP_CANCEL_DIST) {
+      if (lpTimer.current) { clearTimeout(lpTimer.current); lpTimer.current = null; }
+    }
+  };
+  const handleTouchEndItem = () => () => {
+    if (!isTouchDevice) return;
+    if (lpTimer.current) { clearTimeout(lpTimer.current); lpTimer.current = null; }
+  };
+  const handleClickItem = (id: string) => () => {
+    if (isTouchDevice && Date.now() < ignoreClicksUntil.current) return; // ignore clic après appui long
+    openLightboxFor(id);
   };
 
   /* ---------- Rendu ---------- */
@@ -535,7 +620,7 @@ export default function GaleriePage() {
         </div>
       )}
 
-      {/* Grille */}
+      {/* Grille - vignettes plus petites sur desktop */}
       {loading ? (
         <p className="mt-6 text-white/70">Chargement…</p>
       ) : items.length === 0 ? (
@@ -553,7 +638,7 @@ export default function GaleriePage() {
           )}
         </div>
       ) : (
-        <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-3">
+        <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-7">
           {items.map((m) => {
             const isImg = m.kind === "image";
             const isVid = m.kind === "video";
@@ -563,7 +648,14 @@ export default function GaleriePage() {
             const assigned = assignedMap[m.public_id];
 
             return (
-              <div key={m.id} className="group relative overflow-hidden rounded-lg border border-white/20">
+              <div
+                key={m.id}
+                className="group relative overflow-hidden rounded-lg border border-white/20"
+                onTouchStart={handleTouchStartItem(m.public_id)}
+                onTouchMove={handleTouchMoveItem()}
+                onTouchEnd={handleTouchEndItem()}
+                onContextMenu={(e) => e.preventDefault()}
+              >
                 {/* Badge d'affectation */}
                 {assigned && (
                   <Link
@@ -590,7 +682,7 @@ export default function GaleriePage() {
                       width={800}
                       height={600}
                       className="h-full w-full cursor-zoom-in object-cover transition-transform duration-300 group-hover:scale-105"
-                      onClick={() => openLightboxFor(m.id)}
+                      onClick={handleClickItem(m.id)}
                       unoptimized
                     />
                   ) : isVid ? (
@@ -608,12 +700,12 @@ export default function GaleriePage() {
                         preload="metadata"
                         muted
                         playsInline
-                        onClick={() => openLightboxFor(m.id)}
+                        onClick={handleClickItem(m.id)}
                       />
                     )
                   ) : isAudio ? (
                     <button
-                      onClick={() => openLightboxFor(m.id)}
+                      onClick={handleClickItem(m.id)}
                       className="grid h-full w-full place-items-center bg-white/5 text-white/90"
                       title="Écouter"
                     >
@@ -621,7 +713,7 @@ export default function GaleriePage() {
                     </button>
                   ) : isDoc ? (
                     <button
-                      onClick={() => openLightboxFor(m.id)}
+                      onClick={handleClickItem(m.id)}
                       className="grid h-full w-full place-items-center bg-white/5 text-white/90"
                       title="Ouvrir"
                     >
@@ -683,7 +775,7 @@ export default function GaleriePage() {
                 }
                 if (ext === "pdf") {
                   const pdfUrl = apiFile(cur.public_id, { format: "pdf", dl: 0, filename: sanitizeName((cur.title || "document") + ".pdf") });
-                  return <iframe src={pdfUrl} className="h-[80vh] w-full bg-white" title={cur.title || "PDF"} />;
+                  return <iframe src={pdfUrl} className="h/[80vh] w-full bg-white" title={cur.title || "PDF"} />;
                 }
                 if (officeExts.includes(ext)) {
                   const fileUrl = openUrl(cur, ext);

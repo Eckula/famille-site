@@ -1,15 +1,19 @@
 // app/api/folders/route.ts
-import { NextResponse } from "next/server";
-import prisma from "@/lib/prisma";         // ✅ singleton
-import { requireAdmin } from "@/app/api/_admin";  // ✅ helper (retour NextResponse | null)
-
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+import { NextResponse } from "next/server";
+import prisma from "@/lib/prisma";
+import { requireAdmin } from "@/app/api/_admin";
 
 const ok = (data: any, status = 200) =>
   NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });
 
-// utils
+/* ---------------- helpers ---------------- */
+
+const SYSTEM_ROOT_NAMES = ["Albums", "Événements", "Evenements", "Documents"] as const;
+type SystemRootName = (typeof SYSTEM_ROOT_NAMES)[number];
+
 async function idFromName(name?: string | null) {
   if (!name) return null;
   const f = await prisma.appFolder.findFirst({
@@ -18,18 +22,21 @@ async function idFromName(name?: string | null) {
   });
   return f?.id ?? null;
 }
+
+async function systemRootIds(): Promise<Record<SystemRootName, string | null>> {
+  const out: Record<string, string | null> = {};
+  for (const n of SYSTEM_ROOT_NAMES) out[n] = await idFromName(n);
+  return out as Record<SystemRootName, string | null>;
+}
+
 async function isAlbumFolderId(id: string) {
-  const f = await prisma.appFolder.findUnique({
-    where: { id },
-    select: { parentId: true },
-  });
-  if (!f?.parentId) return false;
-  const p = await prisma.appFolder.findUnique({
-    where: { id: f.parentId },
-    select: { name: true },
-  });
+  const row = await prisma.appFolder.findUnique({ where: { id }, select: { parentId: true } });
+  if (!row?.parentId) return false;
+  const p = await prisma.appFolder.findUnique({ where: { id: row.parentId }, select: { name: true } });
   return p?.name === "Albums";
 }
+
+/* ---------------- GET ---------------- */
 
 export async function GET(req: Request) {
   try {
@@ -45,18 +52,24 @@ export async function GET(req: Request) {
       return ok({ item });
     }
 
-    // 2) listing
-    const parent = sp.get("parent");         // id parent
-    const parentName = sp.get("parentName"); // "Albums", "Evenements" ...
-    const root = sp.get("root");             // "gallery" => racine galerie (hors systèmes)
-    const recent = Number(sp.get("recent") || 0); // ✅ pour le mini-sélecteur
+    // paramètres “listing”
+    const parent        = sp.get("parent");           // id parent
+    const parentName    = sp.get("parentName");       // ex: Albums / Evenements
+    const root          = sp.get("root");             // "gallery" => racine "galerie"
+    const recent        = Number(sp.get("recent") || 0);
+    const excludeAlbums = sp.get("excludeAlbums") === "1";
+    const showSystem    = sp.get("showSystem") === "1";
 
+    const sysIds = await systemRootIds();
+    const albumsRootId = sysIds["Albums"];
+
+    // 2) enfants d’un parent par id
     if (parent) {
-      // Compat Galerie: { folders, parent }
       const parentRow = await prisma.appFolder.findUnique({
         where: { id: parent },
         select: { id: true, name: true, parentId: true },
       });
+
       const folders = await prisma.appFolder.findMany({
         where: { parentId: parent },
         orderBy: [{ createdAt: "desc" }, { name: "asc" }],
@@ -68,6 +81,7 @@ export async function GET(req: Request) {
       return ok({ folders, parent: parentRow });
     }
 
+    // 3) enfants d’un parent par nom (Albums / Evenements …)
     if (parentName) {
       const pid = await idFromName(parentName);
       const items = await prisma.appFolder.findMany({
@@ -78,23 +92,26 @@ export async function GET(req: Request) {
       return ok({ items });
     }
 
+    // 4) liste “récentes” (utile pour sélecteurs)
     if (recent > 0) {
-      // ✅ N derniers dossiers (hors racines), utile au sélecteur d’album
+      const where: any = { parentId: { not: null } };
+      if (excludeAlbums && albumsRootId) where.parentId = { not: albumsRootId };
+
       const items = await prisma.appFolder.findMany({
-        where: { parentId: { not: null } },
+        where,
         orderBy: { createdAt: "desc" },
-        take: Math.min(recent, 200),
+        take: Math.min(recent, 300),
         select: { id: true, name: true, parentId: true, createdAt: true },
       });
       return ok({ items });
     }
 
+    // 5) racine “Galerie” (on masque toujours les racines système)
     if (root === "gallery") {
-      // Compat Galerie: { folders, parent: null }
       const folders = await prisma.appFolder.findMany({
         where: {
           parentId: null,
-          NOT: { name: { in: ["Albums", "Événements", "Evenements", "Documents"] } },
+          NOT: { name: { in: SYSTEM_ROOT_NAMES as unknown as string[] } },
         },
         orderBy: [{ createdAt: "desc" }, { name: "asc" }],
         select: {
@@ -105,9 +122,13 @@ export async function GET(req: Request) {
       return ok({ folders, parent: null });
     }
 
-    // racine par défaut
+    // 6) racine par défaut : par **défaut** on masque les systèmes
+    const whereRoot = showSystem
+      ? { parentId: null }
+      : { parentId: null, NOT: { name: { in: SYSTEM_ROOT_NAMES as unknown as string[] } } };
+
     const items = await prisma.appFolder.findMany({
-      where: { parentId: null },
+      where: whereRoot,
       orderBy: [{ createdAt: "desc" }, { name: "asc" }],
       select: { id: true, name: true, parentId: true, createdAt: true },
     });
@@ -116,6 +137,8 @@ export async function GET(req: Request) {
     return ok({ error: e?.message || "Erreur GET /folders" }, 500);
   }
 }
+
+/* ---------------- POST ---------------- */
 
 export async function POST(req: Request) {
   try {
@@ -132,12 +155,9 @@ export async function POST(req: Request) {
       pid = parentRow?.id ?? null;
     }
 
-    // créer un ALBUM => admin
+    // créer sous “Albums” => réservé admin
     if (pid) {
-      const p = await prisma.appFolder.findUnique({
-        where: { id: pid },
-        select: { name: true },
-      });
+      const p = await prisma.appFolder.findUnique({ where: { id: pid }, select: { name: true } });
       if (p?.name === "Albums") {
         const deny = await requireAdmin(req);
         if (deny) return deny;
@@ -153,6 +173,8 @@ export async function POST(req: Request) {
     return ok({ error: e?.message || "Erreur POST /folders" }, 400);
   }
 }
+
+/* ---------------- PATCH ---------------- */
 
 export async function PATCH(req: Request) {
   try {
@@ -180,15 +202,17 @@ export async function PATCH(req: Request) {
   }
 }
 
+/* ---------------- DELETE ---------------- */
+
 export async function DELETE(req: Request) {
   try {
     const { id } = await req.json();
     if (!id) return ok({ error: "id requis" }, 400);
 
     if (await isAlbumFolderId(id)) {
+      // supprimer un album => admin, et on nettoie les liens uniquement
       const deny = await requireAdmin(req);
       if (deny) return deny;
-      // on ne touche pas aux dossiers/médias → seulement nettoyer les liens
       await prisma.albumFolderLink.deleteMany({ where: { albumId: id } });
     }
 

@@ -1,62 +1,55 @@
 // app/api/folders/create/route.ts
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
-import { NextRequest, NextResponse } from "next/server";
-import { v2 as cloudinary } from "cloudinary";
-import prisma from "@/lib/prisma";               // ← singleton (recommandé)
-import { requireAdmin } from "@/app/api/_admin";
-
-const ROOT = (process.env.CLOUDINARY_ROOT_FOLDER || "famille").trim();
+import { NextRequest, NextResponse } from 'next/server';
+import { v2 as cloudinary } from 'cloudinary';
 
 function ensureCloudinary() {
-  const cn = process.env.CLOUDINARY_CLOUD_NAME || process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
-  const ak = process.env.CLOUDINARY_API_KEY;
-  const as = process.env.CLOUDINARY_API_SECRET;
-  if (!cn || !ak || !as) throw new Error("Cloudinary: variables manquantes (cloud_name/api_key/api_secret).");
-  cloudinary.config({ cloud_name: cn, api_key: ak, api_secret: as, secure: true });
+  const cloud_name =
+    process.env.CLOUDINARY_CLOUD_NAME || process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
+  const api_key = process.env.CLOUDINARY_API_KEY;
+  const api_secret = process.env.CLOUDINARY_API_SECRET;
+  if (!cloud_name || !api_key || !api_secret) {
+    throw new Error('Cloudinary: variables manquantes (CLOUDINARY_*).');
+  }
+  cloudinary.config({ cloud_name, api_key, api_secret, secure: true });
 }
 
-const ok = (d: any, s = 200) =>
-  NextResponse.json(d, { status: s, headers: { "Cache-Control": "no-store" } });
+function sanitizeSegment(s: string) {
+  // autorise lettres/chiffres/ - _ et / (pour sous-dossiers), enlève espaces & caractères spéciaux
+  return s.replace(/[^\w\-\/]+/g, '_').replace(/\/{2,}/g, '/').replace(/^\/|\/$/g, '');
+}
 
-/**
- * Body:
- * { parentName: "Albums" | "Evenements", name: "Mon album" }
- * -> crée le dossier Cloudinary `${ROOT}/${parentName}/${name}`
- * -> assure la présence côté Prisma (parent + enfant dans AppFolder)
- */
 export async function POST(req: NextRequest) {
-  const deny = await requireAdmin(req);
-  if (deny) return deny;
-
   try {
-    const { parentName, name } = await req.json();
-    const parent = String(parentName || "").trim();
-    const child  = String(name || "").trim();
-    if (!parent || !child) return ok({ error: "parentName et name requis." }, 400);
-
     ensureCloudinary();
 
-    // 1) Cloudinary (idempotent)
-    const clPath = `${ROOT}/${parent}/${child}`;
-    try {
-      // @ts-ignore
-      await cloudinary.api.create_folder(clPath);
-    } catch (e: any) {
-      const msg = e?.error?.message || e?.message || "";
-      if (!/already exists/i.test(msg)) throw e;
+    const ROOT = (process.env.CLOUDINARY_ROOT_FOLDER || 'famille').trim();
+    const body = await req.json().catch(() => ({}));
+    const parent = typeof body?.parent === 'string' ? body.parent : '';
+    const child = typeof body?.child === 'string' ? body.child : '';
+
+    if (!child) {
+      return NextResponse.json({ error: 'Paramètre "child" requis.' }, { status: 400 });
     }
 
-    // 2) Prisma (modèle AppFolder)
-    let p = await prisma.appFolder.findFirst({ where: { name: parent, parentId: null } });
-    if (!p) p = await prisma.appFolder.create({ data: { name: parent, parentId: null } });
+    const parentSan = parent ? sanitizeSegment(parent) : '';
+    const childSan = sanitizeSegment(child);
+    const clPath = [sanitizeSegment(ROOT), parentSan, childSan].filter(Boolean).join('/');
 
-    let c = await prisma.appFolder.findFirst({ where: { name: child, parentId: p.id } });
-    if (!c) c = await prisma.appFolder.create({ data: { name: child, parentId: p.id } });
+    // Types Cloudinary peuvent ne pas déclarer create_folder dans tous les env → cast en any
+    const createFolder = (cloudinary as any).api.create_folder as (p: string) => Promise<any>;
 
-    return ok({ ok: true, item: { id: c.id, name: c.name, parentId: c.parentId }, cloudinaryPath: clPath });
+    const res = await createFolder(clPath);
+
+    return NextResponse.json({
+      ok: true,
+      path: clPath,
+      result: { ...res },
+    });
   } catch (e: any) {
-    return ok({ error: e?.message || "Erreur création dossier." }, 500);
+    const msg = e?.error?.message || e?.message || 'Erreur inconnue';
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

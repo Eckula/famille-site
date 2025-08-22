@@ -3,6 +3,7 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 type UploadItem = {
   file: File;
@@ -19,7 +20,19 @@ const ROOT = process.env.NEXT_PUBLIC_DEFAULT_UPLOAD_ROOT || "famille";
 type Rubrique = "Photos" | "Vidéos" | "Documents" | "Audio";
 const RUBRIQUES: Rubrique[] = ["Photos", "Vidéos", "Documents", "Audio"];
 
+async function indexInDb(publicIds: string[], folderId: string | null) {
+  const r = await fetch("/api/folders/assign", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ folderId, public_ids: publicIds }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j?.error) throw new Error(j?.error || `HTTP ${r.status}`);
+  return j;
+}
+
 export default function UploadPage() {
+  const router = useRouter();
   const [rubrique, setRubrique] = useState<Rubrique>("Photos");
   const [subFolder, setSubFolder] = useState("");
   const [items, setItems] = useState<UploadItem[]>([]);
@@ -50,22 +63,21 @@ export default function UploadPage() {
     }));
     setItems((prev) => [...prev, ...nextItems]);
 
-    e.target.value = ""; // reset input
+    e.target.value = ""; // reset
   }
 
   const uploadOne = useCallback(
-    async (idx: number) => {
+    async (idx: number): Promise<string | null> => {
       const it = items[idx];
-      if (!it || it.status === "uploading" || it.status === "done") return;
+      if (!it || it.status === "uploading" || it.status === "done") return null;
 
-      // garde-fou client
       if (it.file.size > MAX_MB * 1024 * 1024) {
         setItems((prev) => {
           const copy = [...prev];
           copy[idx] = { ...it, status: "error", error: `Fichier trop volumineux (> ${MAX_MB} Mo)` };
           return copy;
         });
-        return;
+        return null;
       }
 
       // 1) Signature
@@ -82,11 +94,11 @@ export default function UploadPage() {
           copy[idx] = { ...it, status: "error", error: j?.error || "Erreur signature" };
           return copy;
         });
-        return;
+        return null;
       }
       const sign = await sRes.json();
 
-      // 2) Upload direct → Cloudinary (resource_type=auto)
+      // 2) Upload direct Cloudinary
       const endpoint = `https://api.cloudinary.com/v1_1/${sign.cloud_name}/auto/upload`;
       const form = new FormData();
       form.append("file", it.file);
@@ -104,7 +116,7 @@ export default function UploadPage() {
         return copy;
       });
 
-      await new Promise<void>((resolve) => {
+      const publicId = await new Promise<string | null>((resolve) => {
         const xhr = new XMLHttpRequest();
         xhr.open("POST", endpoint);
         xhr.upload.onprogress = (ev) => {
@@ -121,23 +133,20 @@ export default function UploadPage() {
           if (xhr.status >= 200 && xhr.status < 300) {
             try {
               const r = JSON.parse(xhr.responseText);
+              const pid: string = r.public_id;
               setItems((prev) => {
                 const copy = [...prev];
-                copy[idx] = {
-                  ...copy[idx],
-                  status: "done",
-                  progress: 100,
-                  url: r.secure_url,
-                  public_id: r.public_id,
-                };
+                copy[idx] = { ...copy[idx], status: "done", progress: 100, url: r.secure_url, public_id: pid };
                 return copy;
               });
+              resolve(pid || null);
             } catch {
               setItems((prev) => {
                 const copy = [...prev];
                 copy[idx] = { ...copy[idx], status: "error", error: "Réponse invalide Cloudinary" };
                 return copy;
               });
+              resolve(null);
             }
           } else {
             let msg = "Échec de l’upload";
@@ -150,8 +159,8 @@ export default function UploadPage() {
               copy[idx] = { ...copy[idx], status: "error", error: msg };
               return copy;
             });
+            resolve(null);
           }
-          resolve();
         };
         xhr.onerror = () => {
           setItems((prev) => {
@@ -159,21 +168,33 @@ export default function UploadPage() {
             copy[idx] = { ...copy[idx], status: "error", error: "Erreur réseau" };
             return copy;
           });
-          resolve();
+          resolve(null);
         };
         xhr.send(form);
       });
+
+      return publicId;
     },
     [items, finalFolder]
   );
 
   async function startAll() {
+    const batchIds: string[] = [];
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
       if (it.status === "idle" || it.status === "error") {
         // eslint-disable-next-line no-await-in-loop
-        await uploadOne(i);
+        const pid = await uploadOne(i);
+        if (pid) batchIds.push(pid);
       }
+    }
+    // ⬇⬇⬇ INDEXATION IMMÉDIATE DANS “MES FICHIERS”
+    if (batchIds.length) {
+      await indexInDb(batchIds, null);
+      // notifie la galerie + redirige sur Mes fichiers
+      try { window.dispatchEvent(new CustomEvent("media-uploaded", { detail: batchIds })); } catch {}
+      const ts = Date.now();
+      router.push(`/galerie?view=unassigned&ts=${ts}`);
     }
   }
 
@@ -181,7 +202,6 @@ export default function UploadPage() {
     setItems([]);
   }
 
-  // ─────────── UI : “ancien look” ───────────
   return (
     <main className="px-6 py-10 text-white">
       <h1 className="text-3xl font-bold mb-1">Uploader des médias</h1>
@@ -189,7 +209,7 @@ export default function UploadPage() {
         Sélectionne plusieurs fichiers (images, vidéos, PDF, Word, audio, etc.). Ils seront rangés selon la rubrique choisie.
       </p>
 
-      {/* Ligne : Sélection Rubrique + Sous-dossier */}
+      {/* Rubrique + Sous-dossier */}
       <div className="flex flex-wrap gap-2 mb-2">
         <select
           value={rubrique}
@@ -209,7 +229,7 @@ export default function UploadPage() {
         />
       </div>
 
-      {/* Dropzone visuelle */}
+      {/* Dropzone */}
       <div
         className="rounded-lg border-2 border-dashed border-white/40 bg-black/30 p-6 mb-2 text-center"
         onDragOver={(e) => e.preventDefault()}
@@ -228,7 +248,7 @@ export default function UploadPage() {
         <div className="mb-1">Glisse les fichiers ici</div>
         <button
           className="rounded px-3 py-1 border border-white/40 bg-white/10 hover:bg-white/20"
-          onClick={() => inputRef.current?.click()}
+          onClick={pickFiles}
         >
           Choisir des fichiers
         </button>
@@ -241,7 +261,6 @@ export default function UploadPage() {
           multiple
           onChange={onInputChange}
           className="hidden"
-          // formats courants
           accept="image/*,video/*,audio/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,.txt,.csv,.rtf"
         />
       </div>

@@ -1,94 +1,96 @@
 // app/api/media/assign/route.ts
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
-import { NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-import { requireAdmin } from "../../_admin";
+import { NextResponse } from 'next/server';
+import prisma from '@/lib/prisma'; // alias "@/lib/..." recommandé
 
-const ok = (data: any, status = 200) =>
-  NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });
+type Body = {
+  action: 'assign' | 'unassign' | 'move';
+  // cible (alias acceptés)
+  appFolderId?: string | null;
+  folderId?: string | null;
 
-/**
- * POST /api/media/assign
- *
- * Body exemple:
- * {
- *   action: "assign" | "unassign",
- *   appFolderId?: "xxx",     // alias: folderId
- *   folderId?: "xxx",        // alias accepté
- *   publicIds: ["id1","id2"] // alias: public_ids | ids
- * }
- */
+  // optionnel : dossier source pour "move" (on ne bloque pas si absent)
+  fromFolderId?: string | null;
+
+  // médias à traiter
+  publicIds?: string[];
+};
+
+const ok = (d: any, s = 200) =>
+  NextResponse.json(d, { status: s, headers: { 'Cache-Control': 'no-store' } });
+
+function normArray(x: any): string[] {
+  if (!x) return [];
+  if (Array.isArray(x)) return x.map(String).filter(Boolean);
+  return [String(x)].filter(Boolean);
+}
+
 export async function POST(req: Request) {
-  const deny = await requireAdmin(req);
-  if (deny) return deny;
-
   try {
-    const body = await req.json().catch(() => ({}));
-    const action = String(body?.action || "assign");
+    const body: Body = await req.json().catch(() => ({} as any));
 
-    const ids: string[] = (body.publicIds || body.public_ids || body.ids || [])
-      .filter(Boolean)
-      .map((x: any) => String(x));
-
-    if (!Array.isArray(ids) || ids.length === 0) {
-      return ok({ error: "Aucun publicId fourni." }, 400);
-    }
-
-    // On unifie l’ID de dossier (alias appFolderId/folderId)
-    const targetFolderId: string | null =
-      action === "assign"
-        ? String(body?.appFolderId ?? body?.folderId ?? "")
+    const action = (body?.action || 'assign') as Body['action'];
+    const targetFolderId =
+      (body?.appFolderId ?? body?.folderId) != null
+        ? String(body.appFolderId ?? body.folderId)
         : null;
 
-    if (action === "assign" && !targetFolderId) {
-      return ok({ error: "folderId (ou appFolderId) requis pour 'assign'." }, 400);
+    const publicIds = normArray(body?.publicIds);
+    if (!publicIds.length) {
+      return ok({ error: 'publicIds requis (array de public_id).' }, 400);
     }
 
-    // Vérifier l’existence du dossier si assign
-    if (targetFolderId) {
-      const exists = await prisma.appFolder.findUnique({
-        where: { id: targetFolderId },
-        select: { id: true },
-      });
-      if (!exists) return ok({ error: "Dossier introuvable." }, 404);
+    // Pour assign/move, on exige une cible existante
+    if ((action === 'assign' || action === 'move')) {
+      if (!targetFolderId) return ok({ error: 'folderId (ou appFolderId) requis.' }, 400);
+      const f = await prisma.appFolder.findUnique({ where: { id: targetFolderId }, select: { id: true } });
+      if (!f) return ok({ error: 'Dossier cible introuvable.' }, 404);
     }
 
-    let results: { upserted?: number; deleted?: number } = {};
+    let updated = 0;
+    let created = 0;
+    let unassigned = 0;
 
-    if (action === "assign" && targetFolderId) {
-      // Upsert par publicId (unique)
-      const res = await prisma.$transaction(
-        ids.map((publicId) =>
-          prisma.mediaIndex.upsert({
-            where: { publicId },
-            update: { appFolderId: targetFolderId },
-            create: { publicId, appFolderId: targetFolderId },
-          })
-        )
-      );
-      results.upserted = res.length;
-    } else if (action === "unassign") {
-      // On retire l’affectation en supprimant les lignes
-      const res = await prisma.mediaIndex.deleteMany({
-        where: { publicId: { in: ids } },
-      });
-      results.deleted = res.count;
+    if (action === 'unassign') {
+      // Retire l’affectation (appFolderId = null)
+      for (const publicId of publicIds) {
+        const exists = await prisma.mediaIndex.findUnique({ where: { publicId }, select: { publicId: true } });
+        if (exists) {
+          await prisma.mediaIndex.update({ where: { publicId }, data: { appFolderId: null } });
+          updated++;
+        } else {
+          // pas d’index -> rien à mettre à jour
+          unassigned++; // comptage informatif
+        }
+      }
     } else {
-      return ok(
-        { error: "action invalide (attendu: 'assign' ou 'unassign')." },
-        400
-      );
+      // assign OU move -> on (upsert) vers targetFolderId
+      for (const publicId of publicIds) {
+        const row = await prisma.mediaIndex.upsert({
+          where: { publicId },
+          update: { appFolderId: targetFolderId! },
+          create: { publicId, appFolderId: targetFolderId! },
+        });
+        // si l’upsert créait la ligne, pas d’info directe -> heuristique : on (re)lit
+        if (row && row.publicId === publicId) updated++;
+        else created++;
+      }
     }
 
     return ok({
       ok: true,
       action,
-      appFolderId: targetFolderId ?? undefined, // une seule clé, pas de doublon
-      ...results,
+      appFolderId: targetFolderId ?? null,
+      counts: { updated, created, unassigned },
     });
   } catch (e: any) {
-    return ok({ error: e?.message || "Erreur assignation." }, 500);
+    return ok({ error: e?.message || 'Erreur assignation médias.' }, 500);
   }
 }
+
+// Tolérance aux différents verbes utilisés côté front
+export const PUT = POST;
+export const PATCH = POST;
