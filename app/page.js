@@ -50,7 +50,7 @@ export default function HomePage() {
           Famille Merenge – Accueil
         </h1>
         <p className="mt-4 text-lg max-w-2xl drop-shadow">
-          Bienvenue sur notre espace familial — retrouvez photos, vidéos, souvenirs et événements importants.
+          Bienvenue sur notre espace familial MERENGE — retrouvez photos, vidéos, souvenirs et événements importants.
         </p>
       </section>
 
