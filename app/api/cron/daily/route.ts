@@ -1,94 +1,250 @@
 // app/api/cron/daily/route.ts
-import { NextRequest, NextResponse } from 'next/server';
-import nodemailer from 'nodemailer';
-import { computeBirthdays } from '@/lib/birthdays';
-
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
-function checkAuth(req: NextRequest) {
-  const expected = process.env.CRON_SECRET;
-  const auth = req.headers.get('authorization');
-  const keyFromQuery = new URL(req.url).searchParams.get('key'); // pour tests manuels
-  if (!expected) return false;
-  return auth === `Bearer ${expected}` || keyFromQuery === expected;
+import { NextRequest, NextResponse } from 'next/server';
+
+/* =========================
+   Types (souples)
+   ========================= */
+type BirthdayItem = { name: string; age?: number; dateISO?: string; inDays?: number };
+type MemorialItem = { name: string; years?: number; dateISO?: string; inDays?: number };
+type ComputeReturn = {
+  tz?: string;
+  todayISO?: string;
+  birthdaysToday?: BirthdayItem[];
+  memorialsToday?: MemorialItem[];
+  upcomingIn7Days?: BirthdayItem[];
+  memorialsUpcomingIn7Days?: MemorialItem[];
+  [k: string]: any; // compat
+};
+
+/* =========================
+   Utils
+   ========================= */
+
+// Récupère la clé secrète attendue (on accepte CRON_SECRET, CRON_KEY ou cron_key)
+function expectedSecret(): string | undefined {
+  return (
+    process.env.CRON_SECRET ||
+    process.env.CRON_KEY ||
+    // @ts-ignore - certaines configs vercel utilisent des minuscules
+    (process.env as any)?.cron_key
+  );
 }
 
-// ⏰ n'exécuter que si l'heure locale = 07:30 Europe/Paris
-function isAtLocal0730(tz = 'Europe/Paris') {
-  const parts = new Intl.DateTimeFormat('fr-FR', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false })
-    .formatToParts(new Date());
-  const h = Number(parts.find(p => p.type === 'hour')!.value);
-  const m = Number(parts.find(p => p.type === 'minute')!.value);
-  return h === 7 && m === 30;
+// Lit la clé envoyée par le scheduler (query ?key=… ou header x-cron-key)
+function providedSecret(req: NextRequest): string | null {
+  const u = new URL(req.url);
+  return (
+    u.searchParams.get('key') ||
+    u.searchParams.get('secret') ||
+    req.headers.get('x-cron-key') ||
+    req.headers.get('x-vercel-signature') || // au cas où, mais on ne la vérifie pas cryptographiquement ici
+    null
+  );
 }
 
-async function sendEmail(subject: string, html: string, text: string) {
-  const host = process.env.SMTP_HOST;
-  const port = Number(process.env.SMTP_PORT || 465);
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  const from = process.env.EMAIL_FROM;
-  const to = process.env.EMAIL_TO;
+// Appelle computeBirthdays avec compatibilité (selon ta version de lib)
+async function computeAll(tz: string): Promise<ComputeReturn> {
+  const lib = await import('@/lib/birthdays').catch(() => null as any);
+  if (!lib) throw new Error('Module "@/lib/birthdays" introuvable');
 
-  if (!host || !user || !pass || !from || !to) {
-    console.warn('Email désactivé: variables SMTP manquantes');
-    return { sent: false, reason: 'missing_smtp_env' };
+  const fn: any =
+    lib.computeBirthdays ||
+    lib.getBirthdays ||
+    lib.default ||
+    null;
+
+  if (!fn) throw new Error('Aucune fonction computeBirthdays trouvée');
+
+  // Essaie la signature moderne, sinon rétro-compat
+  try {
+    return (await fn(tz, { horizonDays: 7 })) as ComputeReturn;
+  } catch {
+    try {
+      return (await fn(tz)) as ComputeReturn;
+    } catch (e) {
+      throw e;
+    }
   }
+}
 
+// Envoi email si SMTP configuré (nodemailer en import dynamique)
+async function sendEmailIfConfigured(payload: {
+  tz: string;
+  todayISO: string;
+  birthdaysToday: BirthdayItem[];
+  memorialsToday: MemorialItem[];
+  upcomingIn7Days: BirthdayItem[];
+  memorialsUpcomingIn7Days: MemorialItem[];
+}) {
+  const {
+    SMTP_HOST,
+    SMTP_PORT,
+    SMTP_USER,
+    SMTP_PASS,
+    EMAIL_FROM,
+    EMAIL_TO,
+    ENABLE_EMAIL, // facultatif: "1" pour forcer l'envoi
+  } = process.env;
+
+  const wantEmail =
+    ENABLE_EMAIL === '1' || Boolean(SMTP_HOST && SMTP_USER && SMTP_PASS && EMAIL_FROM && EMAIL_TO);
+
+  if (!wantEmail) return { sent: false, reason: 'SMTP non configuré' };
+
+  const port = Number(SMTP_PORT || 465);
+  const secure = port === 465; // TLS implicite
+
+  const nodemailer = (await import('nodemailer')).default;
   const transporter = nodemailer.createTransport({
-    host, port, secure: port === 465,
-    auth: { user, pass } // <= mot de passe d'application Gmail (16 caractères)
+    host: SMTP_HOST,
+    port,
+    secure,
+    auth: { user: SMTP_USER, pass: SMTP_PASS },
   });
 
-  await transporter.sendMail({ from, to, subject, text, html });
-  return { sent: true };
+  const titleParts: string[] = [];
+  if (payload.birthdaysToday?.length) titleParts.push('🎉 Anniversaires');
+  if (payload.memorialsToday?.length) titleParts.push('✝️ Souvenirs');
+  if (titleParts.length === 0) titleParts.push('Rappel quotidien');
+
+  const subject = `${titleParts.join(' + ')} — ${payload.todayISO} (${payload.tz})`;
+
+  const list = (items: { name: string; age?: number; years?: number }[]) =>
+    items
+      .map((p) => {
+        const suffix =
+          p.age !== undefined
+            ? ` (${p.age} an${p.age > 1 ? 's' : ''})`
+            : p.years !== undefined
+            ? ` (${p.years} an${p.years > 1 ? 's' : ''})`
+            : '';
+        return `• ${p.name}${suffix}`;
+      })
+      .join('\n');
+
+  const text =
+    [
+      `Date: ${payload.todayISO} (${payload.tz})`,
+      '',
+      '🎉 Anniversaires aujourd’hui:',
+      payload.birthdaysToday?.length ? list(payload.birthdaysToday) : '—',
+      '',
+      '✝️ Souvenirs aujourd’hui:',
+      payload.memorialsToday?.length ? list(payload.memorialsToday as any) : '—',
+      '',
+      'À venir (7 jours) — Anniversaires:',
+      payload.upcomingIn7Days?.length ? list(payload.upcomingIn7Days) : '—',
+      '',
+      'À venir (7 jours) — Souvenirs:',
+      payload.memorialsUpcomingIn7Days?.length ? list(payload.memorialsUpcomingIn7Days as any) : '—',
+      '',
+      '—',
+      'Cet email est généré automatiquement par le cron Vercel.',
+    ].join('\n');
+
+  try {
+    const info = await transporter.sendMail({
+      from: EMAIL_FROM!,
+      to: EMAIL_TO!,
+      subject,
+      text,
+    });
+    return { sent: true, messageId: info.messageId };
+  } catch (e: any) {
+    return { sent: false, error: String(e?.message || e) };
+  }
 }
+
+/* =========================
+   Handler
+   ========================= */
 
 export async function GET(req: NextRequest) {
-  if (!checkAuth(req)) return new NextResponse('Unauthorized', { status: 401 });
+  // 1) Auth (clé cron)
+  const expected = expectedSecret();
+  const got = providedSecret(req);
+  if (!expected || !got || got !== expected) {
+    return NextResponse.json(
+      { ok: false, error: 'Unauthorized: bad or missing cron key' },
+      { status: 401 }
+    );
+  }
 
+  // 2) Param de test facultatif ?date=YYYY-MM-DD pour forcer la date de calcul
+  const url = new URL(req.url);
+  const dateOverride = url.searchParams.get('date') || undefined;
+
+  // 3) Récup TZ + calcul
   const tz = process.env.EVENTS_TZ || 'Europe/Paris';
-  if (!isAtLocal0730(tz)) {
-    return NextResponse.json({ ok: true, skipped: 'not-07:30-local' });
+
+  let data: ComputeReturn;
+  try {
+    data = await computeAll(tz);
+  } catch (e: any) {
+    return NextResponse.json(
+      { ok: false, error: 'computeBirthdays failed', details: String(e?.message || e) },
+      { status: 500 }
+    );
   }
 
-  const data = computeBirthdays(tz);
-
-  const subjectBits: string[] = [];
-  const text: string[] = [];
-  const html: string[] = [];
-
-  if (data.birthdaysToday.length > 0) {
-    subjectBits.push('🎂');
-    text.push('Anniversaire(s) aujourd’hui :');
-    html.push('<p><strong>Anniversaire(s) aujourd’hui :</strong></p><ul>');
-    data.birthdaysToday.forEach((b: any) => {
-      const line = `• ${b.name}${b.age !== undefined ? ` — ${b.age} ans` : ''}`;
-      text.push(line);
-      html.push(`<li>${b.name}${b.age !== undefined ? ` — ${b.age} ans` : ''}</li>`);
-    });
-    html.push('</ul>');
+  // 3bis) Si ta lib accepte la date override différemment, on tente une 2e passe
+  if (dateOverride) {
+    try {
+      const lib = await import('@/lib/birthdays');
+      const fn: any = (lib as any).computeBirthdays || (lib as any).default;
+      if (fn) {
+        try {
+          data = (await fn(tz, { at: dateOverride, horizonDays: 7 })) as ComputeReturn;
+        } catch {
+          data = (await fn(tz, dateOverride)) as ComputeReturn;
+        }
+      }
+    } catch {
+      // ignore
+    }
   }
 
-  if (data.memorialsToday.length > 0) {
-    subjectBits.push('✝️');
-    text.push('Souvenir (anniversaire de décès) :');
-    html.push('<p><strong>Souvenir (anniversaire de décès) :</strong></p><ul>');
-    data.memorialsToday.forEach((m: any) => {
-      const line = `• ${m.name}${m.years !== undefined ? ` — ${m.years} an(s)` : ''}`;
-      text.push(line);
-      html.push(`<li>${m.name}${m.years !== undefined ? ` — ${m.years} an(s)` : ''}</li>`);
-    });
-    html.push('</ul>');
-  }
+  // 4) Normalisation des champs (évite doublons avec ...rest)
+  const todayISO =
+    data?.todayISO || dateOverride || new Date().toISOString().slice(0, 10);
 
-  let emailResult: any = { sent: false };
-  if (subjectBits.length > 0) {
-    const titleDate = new Date().toLocaleDateString('fr-FR', { timeZone: tz, day: '2-digit', month: 'long' });
-    const subject = `${subjectBits.join(' ')} — ${titleDate}`;
-    emailResult = await sendEmail(subject, html.join('\n'), text.join('\n'));
-  }
+  const birthdaysToday = Array.isArray(data?.birthdaysToday) ? data.birthdaysToday : [];
+  const memorialsToday = Array.isArray(data?.memorialsToday) ? data.memorialsToday : [];
+  const upcomingIn7Days = Array.isArray(data?.upcomingIn7Days) ? data.upcomingIn7Days : [];
+  const memorialsUpcomingIn7Days = Array.isArray(data?.memorialsUpcomingIn7Days)
+    ? data.memorialsUpcomingIn7Days
+    : [];
 
-  return NextResponse.json({ ok: true, tz, todayISO: data.todayISO, ...data, emailResult });
+  // 5) Email (optionnel)
+  const emailResult = await sendEmailIfConfigured({
+    tz,
+    todayISO,
+    birthdaysToday,
+    memorialsToday,
+    upcomingIn7Days,
+    memorialsUpcomingIn7Days,
+  });
+
+  // 6) Réponse JSON SANS DOUBLON de clés
+  //    -> on retire tz & todayISO de "data" avant le spread
+  const { tz: _tzIgnore, todayISO: _todayIgnore, ...rest } = data || {};
+
+  return NextResponse.json({
+    ok: true,
+    tz,
+    todayISO,
+    birthdaysToday,
+    memorialsToday,
+    upcomingIn7Days,
+    memorialsUpcomingIn7Days,
+    ...rest,        // (autres champs non conflictuels de ta lib)
+    emailResult,    // détail de l’envoi SMTP
+  });
 }
+
+// (facultatif) autoriser POST pour tests manuels via curl
+export const POST = GET;
