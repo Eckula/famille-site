@@ -1,9 +1,5 @@
 {
   "version": 2,
-  "installCommand": "npm ci || npm install; npx prisma generate",
-  "buildCommand": "npm run build",
-  "crons": [
-    { "path": "/api/cron/daily", "schedule": "30 5 * * *" },
-    { "path": "/api/cron/daily", "schedule": "30 6 * * *" }
-  ]
+  "installCommand": "npm ci || npm install && npx prisma generate",
+  "buildCommand": "npm run build"
 }
