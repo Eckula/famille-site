@@ -1,144 +1,114 @@
 // app/famille/anniversaires/page.tsx
-export const dynamic = "force-dynamic";
+export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-import Image from "next/image";
-import Link from "next/link";
-import { headers } from "next/headers";
+import Image from 'next/image';
+import Link from 'next/link';
+import { headers } from 'next/headers';
 
-/* ================= Types (réponse /api/birthdays) ================= */
-type Api = {
-  ok: boolean;
-  tz?: string;
-  todayISO: string;
-  birthdaysToday: { name: string; age?: number }[];
-  memorialsToday: { name: string; years?: number }[];
-  upcomingIn7Days?: { dateISO: string; name: string; age?: number }[];
-  memorialsIn7Days?: { dateISO: string; name: string; years?: number }[];
-};
-
-/* ================= Helpers ================= */
-const DEFAULT_AVATAR = "/family/_default.png"; // /public/family/_default.png
-
-function norm(s: string) {
-  return s
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "");
-}
-
-function loadPhotoMap(): Record<string, string> {
-  // Accepte BIRTHDAYS_PHOTOS_JSON (server env) ou NEXT_PUBLIC_BIRTHDAYS_PHOTOS_JSON (public env)
-  const raw =
-    process.env.BIRTHDAYS_PHOTOS_JSON ||
-    process.env.NEXT_PUBLIC_BIRTHDAYS_PHOTOS_JSON ||
-    "[]";
+/* ---------- helpers (photos) ---------- */
+const photoMap = (() => {
   try {
-    const arr = JSON.parse(raw) as { name: string; photo: string }[];
-    const out: Record<string, string> = {};
-    for (const it of arr) out[norm(it.name)] = it.photo;
-    return out;
+    return process.env.BIRTHDAYS_PHOTOS_JSON
+      ? (JSON.parse(process.env.BIRTHDAYS_PHOTOS_JSON) as Record<string, string>)
+      : {};
   } catch {
-    return {};
+    return {} as Record<string, string>;
   }
+})();
+const photoFor = (name: string) => photoMap[name] || '/family/_default.png';
+
+/* ---------- helpers (format & pick) ---------- */
+function pickFirstArray<T = any>(obj: any, keys: string[], fallback: T[] = []): T[] {
+  for (const k of keys) {
+    const v = obj?.[k];
+    if (Array.isArray(v)) return v as T[];
+  }
+  return fallback;
 }
-
-function cloudThumb(publicId: string) {
-  const cloud =
-    process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME ||
-    process.env.CLOUDINARY_CLOUD_NAME ||
-    "";
-  if (!cloud) return null;
-  const encoded = encodeURIComponent(publicId);
-  // vignette ronde visage 120x120
-  return `https://res.cloudinary.com/${cloud}/image/upload/f_auto,q_auto,w_120,h_120,c_thumb,g_face,r_max/${encoded}`;
-}
-
-function photoUrl(map: Record<string, string>, name: string): string {
-  const key = norm(name);
-  const val = map[key] || map[name];
-  if (!val) return DEFAULT_AVATAR;
-
-  // Si c'est une URL complète ou un fichier public
-  if (/^https?:\/\//i.test(val) || val.startsWith("/")) return val;
-
-  // Sinon on suppose un public_id Cloudinary
-  const t = cloudThumb(val);
-  return t || DEFAULT_AVATAR;
-}
-
-function fmtDateFR(iso: string) {
+function asDateLabel(iso?: string) {
+  if (!iso) return '';
   try {
-    const d = new Date(iso + "T00:00:00Z");
-    return d.toLocaleDateString("fr-FR", {
-      weekday: "short",
-      day: "2-digit",
-      month: "long",
+    const d = new Date(iso);
+    return d.toLocaleDateString('fr-FR', {
+      weekday: 'short',
+      day: '2-digit',
+      month: 'short',
     });
   } catch {
     return iso;
   }
 }
 
-/* ================= Page ================= */
+/* ---------- page ---------- */
 export default async function AnniversairesPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ date?: string }>;
+  searchParams: Promise<{ date?: string }>;
 }) {
-  const sp = (await searchParams) || {};
-  const dateOverride = sp.date;
+  const sp = await searchParams;
+  const dateOverride = sp?.date; // ?date=YYYY-MM-DD
 
-  // Construit l'origine (ok Local/Preview/Prod Vercel)
-  const h = headers();
-  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "localhost:3000";
-  const proto = h.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
+  // Construit l’origine (OK local / preview / prod Vercel)
+  const h = await headers();
+  const host = h.get('x-forwarded-host') ?? h.get('host') ?? 'localhost:3000';
+  const proto = h.get('x-forwarded-proto') ?? (host.startsWith('localhost') ? 'http' : 'https');
   const origin = `${proto}://${host}`;
 
-  const url = new URL("/api/birthdays", origin);
-  if (dateOverride) url.searchParams.set("date", dateOverride);
+  // Appel l’API interne /api/birthdays (pas de cache)
+  const qs = new URLSearchParams();
+  if (dateOverride) qs.set('date', dateOverride);
+  const apiUrl = `${origin}/api/birthdays${qs.toString() ? `?${qs}` : ''}`;
 
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) {
-    throw new Error(`API birthdays: HTTP ${res.status}`);
+  let data: any = null;
+  try {
+    const res = await fetch(apiUrl, { cache: 'no-store' });
+    data = await res.json();
+  } catch {
+    data = null;
   }
-  const data = (await res.json()) as Api;
 
-  const photos = loadPhotoMap();
+  const tz = (data?.tz as string) || process.env.EVENTS_TZ || 'Europe/Paris';
+  const todayISO: string =
+    data?.date || data?.todayISO || dateOverride || new Date().toISOString().slice(0, 10);
 
-  const hasToday =
-    (data.birthdaysToday?.length ?? 0) > 0 ||
-    (data.memorialsToday?.length ?? 0) > 0;
+  const birthdaysToday = pickFirstArray(data, ['birthdaysToday', 'todayBirthdays', 'today']);
+  const memorialsToday = pickFirstArray(data, ['memorialsToday', 'todayMemorials']);
+
+  const upcomingBirthdays = pickFirstArray(data, [
+    'upcomingIn7Days',
+    'birthdaysUpcoming',
+    'upcomingBirthdays',
+    'upcoming?.birthdays',
+  ]);
+  const upcomingMemorials = pickFirstArray(data, [
+    'memorialsUpcomingIn7Days',
+    'memorialsUpcoming',
+    'upcomingMemorials',
+    'upcoming?.memorials',
+  ]);
+
+  const hasToday = birthdaysToday.length > 0 || memorialsToday.length > 0;
 
   return (
-    <main className="px-4 py-6 text-white sm:px-6 lg:px-8">
+    <main className="px-6 py-24 text-white">
       <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold">
-            Anniversaires <span aria-hidden>🎂</span> &nbsp;et&nbsp; Souvenirs{" "}
+            Anniversaires <span aria-hidden>🎂</span> <span className="mx-1">et</span> Souvenirs{' '}
             <span aria-hidden>✝️</span>
           </h1>
           <p className="text-white/80">
             {dateOverride ? (
               <>
-                Simulation —{" "}
-                <span className="font-medium">{fmtDateFR(dateOverride)}</span>{" "}
-                •{" "}
-                <Link
-                  href="/famille/anniversaires"
-                  className="underline opacity-90 hover:opacity-100"
-                  prefetch={false}
-                >
-                  revenir à aujourd’hui
+                Simulation — <span className="font-medium">{asDateLabel(dateOverride)}</span> •{' '}
+                <Link href="/famille/anniversaires" className="underline opacity-90 hover:opacity-100">
+                  revenir à aujourd&apos;hui
                 </Link>
               </>
             ) : (
               <>
-                Aujourd’hui —{" "}
-                <span className="font-medium">
-                  {fmtDateFR(data.todayISO)}
-                </span>{" "}
-                ({data.tz || "Europe/Paris"})
+                Aujourd&apos;hui — <span className="font-medium">{asDateLabel(todayISO)}</span> ({tz})
               </>
             )}
           </p>
@@ -153,80 +123,70 @@ export default async function AnniversairesPage({
         </Link>
       </div>
 
-      {/* Aujourd’hui */}
+      {/* Aujourd'hui */}
       <section className="mb-10">
-        <h2 className="mb-3 text-xl font-semibold">Aujourd’hui</h2>
+        <h2 className="mb-3 text-xl font-semibold">Aujourd&apos;hui</h2>
 
         {!hasToday ? (
           <div className="rounded-xl border border-white/15 bg-white/5 p-4 text-white/80">
-            Aucun anniversaire ou souvenir aujourd’hui.
+            Aucun anniversaire ou souvenir aujourd&apos;hui.
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            {/* Anniversaires aujourd’hui */}
+            {/* Anniversaires aujourd'hui */}
             <div className="rounded-xl border border-white/15 bg-white/5 p-4">
               <div className="mb-2 text-lg font-semibold">🎉 Anniversaires</div>
-              {!(data.birthdaysToday?.length ?? 0) ? (
+              {birthdaysToday.length === 0 ? (
                 <div className="text-white/70">—</div>
               ) : (
                 <ul className="space-y-2">
-                  {data.birthdaysToday.map((p, i) => {
-                    const u = photoUrl(photos, p.name);
-                    return (
-                      <li key={`bt-${i}`} className="flex items-center gap-3">
-                        <Image
-                          src={u}
-                          alt={p.name}
-                          width={40}
-                          height={40}
-                          className="h-10 w-10 rounded-full object-cover ring-2 ring-white/20"
-                          unoptimized
-                        />
-                        <div className="min-w-0">
-                          <div className="truncate font-medium">{p.name}</div>
-                          <div className="text-sm text-white/70">
-                            {typeof p.age === "number"
-                              ? `${p.age} an${p.age > 1 ? "s" : ""}`
-                              : "Anniversaire"}
-                          </div>
+                  {birthdaysToday.map((p: any, i: number) => (
+                    <li key={i} className="flex items-center gap-3">
+                      <Image
+                        src={photoFor(p?.name || '')}
+                        alt={p?.name || 'photo'}
+                        width={40}
+                        height={40}
+                        className="h-10 w-10 rounded-full object-cover ring-2 ring-white/20"
+                        unoptimized
+                      />
+                      <div className="min-w-0">
+                        <div className="truncate font-medium">{p?.name || '—'}</div>
+                        <div className="text-sm text-white/70">
+                          {p?.age !== undefined ? `${p.age} an${p.age > 1 ? 's' : ''}` : 'Anniversaire'}
                         </div>
-                      </li>
-                    );
-                  })}
+                      </div>
+                    </li>
+                  ))}
                 </ul>
               )}
             </div>
 
-            {/* Souvenirs aujourd’hui */}
+            {/* Souvenirs aujourd'hui */}
             <div className="rounded-xl border border-white/15 bg-white/5 p-4">
               <div className="mb-2 text-lg font-semibold">✝️ Souvenirs</div>
-              {!(data.memorialsToday?.length ?? 0) ? (
+              {memorialsToday.length === 0 ? (
                 <div className="text-white/70">—</div>
               ) : (
                 <ul className="space-y-2">
-                  {data.memorialsToday.map((p, i) => {
-                    const u = photoUrl(photos, p.name);
-                    return (
-                      <li key={`mt-${i}`} className="flex items-center gap-3">
-                        <Image
-                          src={u}
-                          alt={p.name}
-                          width={40}
-                          height={40}
-                          className="h-10 w-10 rounded-full object-cover ring-2 ring-white/20"
-                          unoptimized
-                        />
-                        <div className="min-w-0">
-                          <div className="truncate font-medium">{p.name}</div>
-                          <div className="text-sm text-white/70">
-                            {typeof p.years === "number"
-                              ? `${p.years} an${p.years > 1 ? "s" : ""} déjà`
-                              : "Souvenir"}
-                          </div>
+                  {memorialsToday.map((p: any, i: number) => (
+                    <li key={i} className="flex items-center gap-3">
+                      <Image
+                        src={photoFor(p?.name || '')}
+                        alt={p?.name || 'photo'}
+                        width={40}
+                        height={40}
+                        className="h-10 w-10 rounded-full object-cover ring-2 ring-white/20"
+                        unoptimized
+                      />
+                      <div className="min-w-0">
+                        <div className="truncate font-medium">{p?.name || '—'}</div>
+                        <div className="text-sm text-white/70">
+                          {p?.years !== undefined ? `${p.years} an${p.years > 1 ? 's' : ''}` : 'Souvenir'}
                         </div>
-                      </li>
-                    );
-                  })}
+                      </div>
+                    </li>
+                  ))}
                 </ul>
               )}
             </div>
@@ -237,7 +197,7 @@ export default async function AnniversairesPage({
       {/* À venir (7 jours) */}
       <section className="mb-8">
         <h2 className="mb-3 text-xl font-semibold">À venir (7 jours)</h2>
-        {!((data.upcomingIn7Days?.length ?? 0) || (data.memorialsIn7Days?.length ?? 0)) ? (
+        {upcomingBirthdays.length === 0 && upcomingMemorials.length === 0 ? (
           <div className="rounded-xl border border-white/15 bg-white/5 p-4 text-white/80">
             Rien de prévu dans les 7 prochains jours.
           </div>
@@ -246,34 +206,30 @@ export default async function AnniversairesPage({
             {/* Anniversaires à venir */}
             <div className="rounded-xl border border-white/15 bg-white/5 p-4">
               <div className="mb-2 text-lg font-semibold">🎉 Anniversaires</div>
-              {!(data.upcomingIn7Days?.length ?? 0) ? (
+              {upcomingBirthdays.length === 0 ? (
                 <div className="text-white/70">—</div>
               ) : (
                 <ul className="space-y-2">
-                  {data.upcomingIn7Days!.map((e, i) => {
-                    const u = photoUrl(photos, e.name);
-                    return (
-                      <li key={`ub-${i}`} className="flex items-center gap-3">
-                        <Image
-                          src={u}
-                          alt={e.name}
-                          width={40}
-                          height={40}
-                          className="h-10 w-10 rounded-full object-cover ring-2 ring-white/20"
-                          unoptimized
-                        />
-                        <div className="min-w-0">
-                          <div className="truncate font-medium">{e.name}</div>
-                          <div className="text-sm text-white/70">
-                            {e.dateISO ? fmtDateFR(e.dateISO) : "Bientôt"}
-                            {typeof e.age === "number"
-                              ? ` • ${e.age} an${e.age > 1 ? "s" : ""}`
-                              : ""}
-                          </div>
+                  {upcomingBirthdays.map((p: any, i: number) => (
+                    <li key={i} className="flex items-center gap-3">
+                      <Image
+                        src={photoFor(p?.name || '')}
+                        alt={p?.name || 'photo'}
+                        width={40}
+                        height={40}
+                        className="h-10 w-10 rounded-full object-cover ring-2 ring-white/20"
+                        unoptimized
+                      />
+                      <div className="min-w-0">
+                        <div className="truncate font-medium">{p?.name || '—'}</div>
+                        <div className="text-sm text-white/70">
+                          {p?.dateISO ? asDateLabel(p.dateISO) : p?.date || 'Bientôt'}
+                          {p?.age !== undefined ? ` • ${p.age} an${p.age > 1 ? 's' : ''}` : ''}
+                          {p?.inDays !== undefined ? ` • J-${p.inDays}` : ''}
                         </div>
-                      </li>
-                    );
-                  })}
+                      </div>
+                    </li>
+                  ))}
                 </ul>
               )}
             </div>
@@ -281,34 +237,30 @@ export default async function AnniversairesPage({
             {/* Souvenirs à venir */}
             <div className="rounded-xl border border-white/15 bg-white/5 p-4">
               <div className="mb-2 text-lg font-semibold">✝️ Souvenirs</div>
-              {!(data.memorialsIn7Days?.length ?? 0) ? (
+              {upcomingMemorials.length === 0 ? (
                 <div className="text-white/70">—</div>
               ) : (
                 <ul className="space-y-2">
-                  {data.memorialsIn7Days!.map((e, i) => {
-                    const u = photoUrl(photos, e.name);
-                    return (
-                      <li key={`um-${i}`} className="flex items-center gap-3">
-                        <Image
-                          src={u}
-                          alt={e.name}
-                          width={40}
-                          height={40}
-                          className="h-10 w-10 rounded-full object-cover ring-2 ring-white/20"
-                          unoptimized
-                        />
-                        <div className="min-w-0">
-                          <div className="truncate font-medium">{e.name}</div>
-                          <div className="text-sm text-white/70">
-                            {e.dateISO ? fmtDateFR(e.dateISO) : "Bientôt"}
-                            {typeof e.years === "number"
-                              ? ` • ${e.years} an${e.years > 1 ? "s" : ""}`
-                              : ""}
-                          </div>
+                  {upcomingMemorials.map((p: any, i: number) => (
+                    <li key={i} className="flex items-center gap-3">
+                      <Image
+                        src={photoFor(p?.name || '')}
+                        alt={p?.name || 'photo'}
+                        width={40}
+                        height={40}
+                        className="h-10 w-10 rounded-full object-cover ring-2 ring-white/20"
+                        unoptimized
+                      />
+                      <div className="min-w-0">
+                        <div className="truncate font-medium">{p?.name || '—'}</div>
+                        <div className="text-sm text-white/70">
+                          {p?.dateISO ? asDateLabel(p.dateISO) : p?.date || 'Bientôt'}
+                          {p?.years !== undefined ? ` • ${p.years} an${p.years > 1 ? 's' : ''}` : ''}
+                          {p?.inDays !== undefined ? ` • J-${p.inDays}` : ''}
                         </div>
-                      </li>
-                    );
-                  })}
+                      </div>
+                    </li>
+                  ))}
                 </ul>
               )}
             </div>
@@ -316,11 +268,14 @@ export default async function AnniversairesPage({
         )}
       </section>
 
-      {/* Astuce de test */}
-      <p className="mt-6 text-xs text-white/50">
-        Astuce : ajoute <code>?date=YYYY-MM-DD</code> à l’URL pour simuler un jour (ex.{" "}
-        <code>?date=2025-10-21</code>).
-      </p>
+      {/* Aide / test */}
+      <div className="mt-6 text-sm text-white/70">
+        <p>
+          Astuce : ajoute <code>?date=YYYY-MM-DD</code> à l’URL pour simuler un jour (ex.&nbsp;
+          <code>?date=2025-10-21</code>). La pilule bleue permet aussi de tester les effets
+          (long-press/clic droit).
+        </p>
+      </div>
     </main>
   );
 }
