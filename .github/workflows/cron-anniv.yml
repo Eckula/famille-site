@@ -2,9 +2,9 @@ name: Daily family reminders
 
 on:
   schedule:
-    # 07:30 Paris toute l'année (avec gestion été/hiver ci-dessous)
-    - cron: '30 5 * * *'   # Été (Paris = UTC+2 → 05:30 UTC)
-    - cron: '30 6 * * *'   # Hiver (Paris = UTC+1 → 06:30 UTC)
+    # 07:30 Paris toute l'année (été/hiver)
+    - cron: '30 5 * * *'
+    - cron: '30 6 * * *'
   workflow_dispatch: {}
 
 permissions:
@@ -19,14 +19,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      # Étape garde-fou : on ne laisse passer qu'un des deux horaires selon l'offset Europe/Paris.
+      # Laisse passer uniquement le créneau adapté (évite 2 mails par jour)
       - name: Decide if this run is the right one (DST-aware)
         id: gate
         shell: bash
         run: |
           set -euo pipefail
-          OFF=$(TZ='Europe/Paris' date +%z)   # ex: +0200 ou +0100
-          OFF_H=${OFF:0:3}                    # +02 / +01
+          OFF=$(TZ='Europe/Paris' date +%z)   # +0200 ou +0100
+          OFF_H=${OFF:0:3}
           if [[ "$OFF_H" == "+02" ]]; then EXPECTED=05; else EXPECTED=06; fi
           NOW_UTC=$(date -u +%H)
           echo "Paris offset=$OFF_H, expected UTC hour=$EXPECTED, now UTC=$NOW_UTC"
@@ -46,22 +46,16 @@ jobs:
           set -euo pipefail
           URL_CLEAN="$(printf '%s' "${URL:-}" | tr -d '\r\n')"
           KEY_CLEAN="$(printf '%s' "${KEY:-}" | tr -d '\r\n')"
-
           if [ -z "$URL_CLEAN" ]; then
-            echo "Missing secret: CRON_PING_URL" >&2
-            exit 1
+            echo "Missing secret: CRON_PING_URL" >&2; exit 1
           fi
-
           HDR=(-H "User-Agent: github-actions-cron")
           [ -n "$KEY_CLEAN" ] && HDR+=(-H "x-cron-key: $KEY_CLEAN")
-
           echo "GET $URL_CLEAN"
           for i in 1 2 3; do
             if curl -fsS -m 30 "${HDR[@]}" "$URL_CLEAN" >/dev/null; then
-              echo "Ping OK"
-              exit 0
+              echo "Ping OK"; exit 0
             fi
             echo "Retry $i/3…"; sleep 5
           done
-          echo "Ping failed after retries" >&2
-          exit 1
+          echo "Ping failed after retries" >&2; exit 1
