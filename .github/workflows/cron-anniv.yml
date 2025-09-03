@@ -2,8 +2,9 @@ name: Daily family reminders
 
 on:
   schedule:
-    - cron: '30 5 * * *'   # 07:30 Paris (été, UTC+2)
-    - cron: '30 6 * * *'   # 07:30 Paris (hiver, UTC+1)
+    # 07:30 Paris toute l'année (avec gestion été/hiver ci-dessous)
+    - cron: '30 5 * * *'   # Été (Paris = UTC+2 → 05:30 UTC)
+    - cron: '30 6 * * *'   # Hiver (Paris = UTC+1 → 06:30 UTC)
   workflow_dispatch: {}
 
 permissions:
@@ -11,18 +12,36 @@ permissions:
 
 concurrency:
   group: daily-family-reminders
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
+      # Étape garde-fou : on ne laisse passer qu'un des deux horaires selon l'offset Europe/Paris.
+      - name: Decide if this run is the right one (DST-aware)
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          OFF=$(TZ='Europe/Paris' date +%z)   # ex: +0200 ou +0100
+          OFF_H=${OFF:0:3}                    # +02 / +01
+          if [[ "$OFF_H" == "+02" ]]; then EXPECTED=05; else EXPECTED=06; fi
+          NOW_UTC=$(date -u +%H)
+          echo "Paris offset=$OFF_H, expected UTC hour=$EXPECTED, now UTC=$NOW_UTC"
+          if [[ "$NOW_UTC" != "$EXPECTED" && "${{ github.event_name }}" != "workflow_dispatch" ]]; then
+            echo "SHOULD_RUN=false" >> "$GITHUB_ENV"
+          else
+            echo "SHOULD_RUN=true" >> "$GITHUB_ENV"
+          fi
+
       - name: Call Vercel cron endpoint
+        if: env.SHOULD_RUN == 'true'
         shell: bash
         env:
-          URL: ${{ secrets.CRON_PING_URL }}   # ex: https://famille-merenge.vercel.app/api/cron/daily?force=1
-          KEY: ${{ secrets.CRON_PING_KEY }}   # valeur de CRON_SECRET (copiée depuis Vercel)
+          URL: ${{ secrets.CRON_PING_URL }}   # https://famille-merenge.vercel.app/api/cron/daily?force=1
+          KEY: ${{ secrets.CRON_PING_KEY }}   # valeur de CRON_SECRET (Vercel)
         run: |
           set -euo pipefail
           URL_CLEAN="$(printf '%s' "${URL:-}" | tr -d '\r\n')"
@@ -34,9 +53,7 @@ jobs:
           fi
 
           HDR=(-H "User-Agent: github-actions-cron")
-          if [ -n "$KEY_CLEAN" ]; then
-            HDR+=(-H "x-cron-key: $KEY_CLEAN")
-          fi
+          [ -n "$KEY_CLEAN" ] && HDR+=(-H "x-cron-key: $KEY_CLEAN")
 
           echo "GET $URL_CLEAN"
           for i in 1 2 3; do
