@@ -2,18 +2,13 @@ name: Daily family reminders
 
 on:
   schedule:
-    # Été (CEST: UTC+2) → 05:30 UTC = 07:30 Paris
-    - cron: '30 5 * * *'
-    # Hiver (CET: UTC+1) → 06:30 UTC = 07:30 Paris
-    - cron: '30 6 * * *'
-  # Permet de lancer manuellement depuis l'onglet Actions
+    - cron: '30 5 * * *'   # 07:30 Paris (été, UTC+2)
+    - cron: '30 6 * * *'   # 07:30 Paris (hiver, UTC+1)
   workflow_dispatch: {}
 
-# Permissions minimales
 permissions:
   contents: read
 
-# Évite que deux runs se chevauchent si l’un traîne
 concurrency:
   group: daily-family-reminders
   cancel-in-progress: false
@@ -26,28 +21,30 @@ jobs:
       - name: Call Vercel cron endpoint
         shell: bash
         env:
-          URL: ${{ secrets.CRON_PING_URL }}  # crée/maj ce secret dans Settings > Secrets and variables > Actions
+          URL: ${{ secrets.CRON_PING_URL }}   # ex: https://famille-merenge.vercel.app/api/cron/daily?force=1
+          KEY: ${{ secrets.CRON_PING_KEY }}   # valeur de CRON_SECRET (copiée depuis Vercel)
         run: |
           set -euo pipefail
+          URL_CLEAN="$(printf '%s' "${URL:-}" | tr -d '\r\n')"
+          KEY_CLEAN="$(printf '%s' "${KEY:-}" | tr -d '\r\n')"
 
-          if [ -z "${URL:-}" ]; then
+          if [ -z "$URL_CLEAN" ]; then
             echo "Missing secret: CRON_PING_URL" >&2
             exit 1
           fi
 
-          # Nettoie d'éventuels retours à la ligne/espaces
-          URL_CLEAN="$(printf '%s' "$URL" | tr -d '\r\n')"
+          HDR=(-H "User-Agent: github-actions-cron")
+          if [ -n "$KEY_CLEAN" ]; then
+            HDR+=(-H "x-cron-key: $KEY_CLEAN")
+          fi
 
           echo "GET $URL_CLEAN"
-          # 3 tentatives avec délais courts
           for i in 1 2 3; do
-            if curl -fsS -m 30 -H "User-Agent: github-actions-cron" "$URL_CLEAN" >/dev/null; then
+            if curl -fsS -m 30 "${HDR[@]}" "$URL_CLEAN" >/dev/null; then
               echo "Ping OK"
               exit 0
             fi
-            echo "Retry $i/3…"
-            sleep 5
+            echo "Retry $i/3…"; sleep 5
           done
-
           echo "Ping failed after retries" >&2
           exit 1
